@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"internal/testenv"
 	"io"
 	"math"
 	"net"
@@ -22,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/refraction-networking/utls/testenv"
 )
 
 var rsaCertPEM = `-----BEGIN CERTIFICATE-----
