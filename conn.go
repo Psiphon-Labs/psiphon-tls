@@ -1065,6 +1065,26 @@ func (c *Conn) writeChangeCipherRecord() error {
 	return err
 }
 
+// [Psiphon]
+func ReadClientHelloRandom(data []byte) ([]byte, error) {
+	if len(data) < 1 {
+		return nil, errors.New("tls: missing message type")
+	}
+	if data[0] != typeClientHello {
+		return nil, errors.New("tls: unexpected message type")
+	}
+
+	// Unlike readHandshake, m is not retained and so making a copy of the
+	// input data is not necessary.
+
+	var m clientHelloMsg
+	if !m.unmarshal(data) {
+		return nil, errors.New("tls: unexpected message")
+	}
+
+	return m.random, nil
+}
+
 // readHandshakeBytes reads handshake data until c.hand contains at least n bytes.
 func (c *Conn) readHandshakeBytes(n int) error {
 	if c.quic != nil {

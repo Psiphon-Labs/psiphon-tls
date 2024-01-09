@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 )
 
 const (
@@ -771,6 +773,17 @@ type Config struct {
 	// Use of KeyLogWriter compromises security and should only be
 	// used for debugging.
 	KeyLogWriter io.Writer
+
+	// [Psiphon]
+	// ClientHelloPRNG is used for Client Hello randomization and replay.
+	ClientHelloPRNG *prng.PRNG
+
+	// [Psiphon]
+	// GetClientHelloRandom is used to supply a specific value in the TLS
+	// Client Hello random field. This is used to send an anti-probing
+	// message, indistinguishable from random, that proves knowlegde of a
+	// shared secret key.
+	GetClientHelloRandom func() ([]byte, error)
 
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex

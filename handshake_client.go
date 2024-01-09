@@ -85,6 +85,22 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 		supportedVersions:            supportedVersions,
 	}
 
+	// [Psiphon]
+	// TODO! is extraConfig check necessary/
+	if c.config != nil {
+		hello.PRNG = c.config.ClientHelloPRNG
+		if c.config.GetClientHelloRandom != nil {
+			helloRandom, err := c.config.GetClientHelloRandom()
+			if err == nil && len(helloRandom) != 32 {
+				err = errors.New("invalid length")
+			}
+			if err != nil {
+				return nil, nil, errors.New("tls: GetClientHelloRandom failed: " + err.Error())
+			}
+			copy(hello.random, helloRandom)
+		}
+	}
+
 	if c.handshakes > 0 {
 		hello.secureRenegotiation = c.clientFinished[:]
 	}
@@ -109,9 +125,15 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 		hello.cipherSuites = append(hello.cipherSuites, suiteId)
 	}
 
-	_, err := io.ReadFull(config.rand(), hello.random)
-	if err != nil {
-		return nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+	// [Psiphon]
+	// TODO! is config != nil check necessary?
+	var err error
+	if c.config == nil || c.config.GetClientHelloRandom == nil {
+
+		_, err := io.ReadFull(config.rand(), hello.random)
+		if err != nil {
+			return nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+		}
 	}
 
 	// A random session ID is used to detect when the server accepted a ticket
