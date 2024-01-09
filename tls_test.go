@@ -882,6 +882,9 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]byte{'x'}))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
+		// [Psiphon]
+		case "ClientHelloPRNG", "GetClientHelloRandom":
+			continue
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)
 		}

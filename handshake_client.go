@@ -84,6 +84,21 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCon
 		supportedVersions:            supportedVersions,
 	}
 
+	// [Psiphon]
+	if c.config != nil {
+		hello.PRNG = c.config.ClientHelloPRNG
+		if c.config.GetClientHelloRandom != nil {
+			helloRandom, err := c.config.GetClientHelloRandom()
+			if err == nil && len(helloRandom) != 32 {
+				err = errors.New("invalid length")
+			}
+			if err != nil {
+				return nil, nil, nil, errors.New("tls: GetClientHelloRandom failed: " + err.Error())
+			}
+			copy(hello.random, helloRandom)
+		}
+	}
+
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
 	// for compatibility reasons. The supported_versions extension is used
 	// to negotiate versions now. See RFC 8446, Section 4.2.1.
@@ -115,9 +130,14 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCon
 		hello.cipherSuites = append(hello.cipherSuites, suiteId)
 	}
 
-	_, err := io.ReadFull(config.rand(), hello.random)
-	if err != nil {
-		return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+	// [Psiphon]
+	var err error
+	if c.config == nil || c.config.GetClientHelloRandom == nil {
+
+		_, err := io.ReadFull(config.rand(), hello.random)
+		if err != nil {
+			return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+		}
 	}
 
 	// A random session ID is used to detect when the server accepted a ticket
