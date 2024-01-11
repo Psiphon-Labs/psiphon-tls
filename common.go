@@ -132,12 +132,8 @@ const (
 	scsvRenegotiation uint16 = 0x00ff
 )
 
-// CurveID is the type of a TLS identifier for an elliptic curve. See
-// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8.
-//
-// In TLS 1.3, this type is called NamedGroup, but at this time this library
-// only supports Elliptic Curve based groups. See RFC 8446, Section 4.2.7.
-type CurveID uint16
+// CurveID is a tls.CurveID
+type CurveID = tls.CurveID
 
 const (
 	CurveP256 CurveID = 23
@@ -317,32 +313,15 @@ type connectionState struct {
 // 	return cs.ekm(label, context, length)
 // }
 
-// ClientAuthType declares the policy the server will follow for
-// TLS Client Authentication.
-type ClientAuthType int
+// ClientAuthType is tls.ClientAuthType
+type ClientAuthType = tls.ClientAuthType
 
 const (
-	// NoClientCert indicates that no client certificate should be requested
-	// during the handshake, and if any certificates are sent they will not
-	// be verified.
-	NoClientCert ClientAuthType = iota
-	// RequestClientCert indicates that a client certificate should be requested
-	// during the handshake, but does not require that the client send any
-	// certificates.
-	RequestClientCert
-	// RequireAnyClientCert indicates that a client certificate should be requested
-	// during the handshake, and that at least one certificate is required to be
-	// sent by the client, but that certificate is not required to be valid.
-	RequireAnyClientCert
-	// VerifyClientCertIfGiven indicates that a client certificate should be requested
-	// during the handshake, but does not require that the client sends a
-	// certificate. If the client does send a certificate it is required to be
-	// valid.
-	VerifyClientCertIfGiven
-	// RequireAndVerifyClientCert indicates that a client certificate should be requested
-	// during the handshake, and that at least one valid certificate is required
-	// to be sent by the client.
-	RequireAndVerifyClientCert
+	NoClientCert               = tls.NoClientCert
+	RequestClientCert          = tls.RequestClientCert
+	RequireAnyClientCert       = tls.RequireAnyClientCert
+	VerifyClientCertIfGiven    = tls.VerifyClientCertIfGiven
+	RequireAndVerifyClientCert = tls.RequireAndVerifyClientCert
 )
 
 // requiresClientCert reports whether the ClientAuthType requires a client
@@ -358,11 +337,8 @@ func requiresClientCert(c ClientAuthType) bool {
 
 type ClientSessionCache = tls.ClientSessionCache
 
-//go:generate stringer -type=SignatureScheme,CurveID,ClientAuthType -output=common_string.go
-
-// SignatureScheme identifies a signature algorithm supported by TLS. See
-// RFC 8446, Section 4.2.3.
-type SignatureScheme uint16
+// SignatureScheme is a tls.SignatureScheme
+type SignatureScheme = tls.SignatureScheme
 
 const (
 	// RSASSA-PKCS1-v1_5 algorithms.
@@ -390,7 +366,10 @@ const (
 
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide application logic in the GetCertificate and GetConfigForClient callbacks.
-type ClientHelloInfo struct {
+
+type ClientHelloInfo = tls.ClientHelloInfo
+
+type clientHelloInfo struct {
 	// CipherSuites lists the CipherSuites supported by the client (e.g.
 	// TLS_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256).
 	CipherSuites []uint16
@@ -445,14 +424,16 @@ type ClientHelloInfo struct {
 // Context returns the context of the handshake that is in progress.
 // This context is a child of the context passed to HandshakeContext,
 // if any, and is canceled when the handshake concludes.
-func (c *ClientHelloInfo) Context() context.Context {
+func (c *clientHelloInfo) Context() context.Context {
 	return c.ctx
 }
 
 // CertificateRequestInfo contains information from a server's
 // CertificateRequest message, which is used to demand a certificate and proof
 // of control from a client.
-type CertificateRequestInfo struct {
+type CertificateRequestInfo = tls.CertificateRequestInfo
+
+type certificateRequestInfo struct {
 	// AcceptableCAs contains zero or more, DER-encoded, X.501
 	// Distinguished Names. These are the names of root or intermediate CAs
 	// that the server wishes the returned certificate to be signed by. An
@@ -473,7 +454,7 @@ type CertificateRequestInfo struct {
 // Context returns the context of the handshake that is in progress.
 // This context is a child of the context passed to HandshakeContext,
 // if any, and is canceled when the handshake concludes.
-func (c *CertificateRequestInfo) Context() context.Context {
+func (c *certificateRequestInfo) Context() context.Context {
 	return c.ctx
 }
 
@@ -491,26 +472,28 @@ func (c *CertificateRequestInfo) Context() context.Context {
 // HTTPS.
 //
 // Renegotiation is not defined in TLS 1.3.
-type RenegotiationSupport int
+type RenegotiationSupport = tls.RenegotiationSupport
 
 const (
 	// RenegotiateNever disables renegotiation.
-	RenegotiateNever RenegotiationSupport = iota
+	RenegotiateNever = tls.RenegotiateNever
 
 	// RenegotiateOnceAsClient allows a remote server to request
 	// renegotiation once per connection.
-	RenegotiateOnceAsClient
+	RenegotiateOnceAsClient = tls.RenegotiateOnceAsClient
 
 	// RenegotiateFreelyAsClient allows a remote server to repeatedly
 	// request renegotiation.
-	RenegotiateFreelyAsClient
+	RenegotiateFreelyAsClient = tls.RenegotiateFreelyAsClient
 )
 
 // A Config structure is used to configure a TLS client or server.
 // After one has been passed to a TLS function it must not be
 // modified. A Config may be reused; the tls package will also not
 // modify it.
-type Config struct {
+type Config = tls.Config
+
+type config struct {
 	// Rand provides the source of entropy for nonces and RSA blinding.
 	// If Rand is nil, TLS uses the cryptographic random reader in package
 	// crypto/rand.
@@ -807,7 +790,7 @@ type ticketKey struct {
 // ticketKeyFromBytes converts from the external representation of a session
 // ticket key to a ticketKey. Externally, session ticket keys are 32 random
 // bytes and this function expands that into sufficient name and key material.
-func (c *Config) ticketKeyFromBytes(b [32]byte) (key ticketKey) {
+func (c *config) ticketKeyFromBytes(b [32]byte) (key ticketKey) {
 	hashed := sha512.Sum512(b[:])
 	// The first 16 bytes of the hash used to be exposed on the wire as a ticket
 	// prefix. They MUST NOT be used as a secret. In the future, it would make
@@ -825,13 +808,13 @@ const maxSessionTicketLifetime = 7 * 24 * time.Hour
 
 // Clone returns a shallow clone of c or nil if c is nil. It is safe to clone a Config that is
 // being used concurrently by a TLS client or server.
-func (c *Config) Clone() *Config {
+func (c *config) Clone() *config {
 	if c == nil {
 		return nil
 	}
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	return &Config{
+	return &config{
 		Rand:                        c.Rand,
 		Time:                        c.Time,
 		Certificates:                c.Certificates,
@@ -871,7 +854,7 @@ var deprecatedSessionTicketKey = []byte("DEPRECATED")
 
 // initLegacySessionTicketKeyRLocked ensures the legacy SessionTicketKey field is
 // randomized if empty, and that sessionTicketKeys is populated from it otherwise.
-func (c *Config) initLegacySessionTicketKeyRLocked() {
+func (c *config) initLegacySessionTicketKeyRLocked() {
 	// Don't write if SessionTicketKey is already defined as our deprecated string,
 	// or if it is defined by the user but sessionTicketKeys is already set.
 	if c.SessionTicketKey != [32]byte{} &&
@@ -908,7 +891,7 @@ func (c *Config) initLegacySessionTicketKeyRLocked() {
 // encrypting tickets (ie. the first ticketKey in c.sessionTicketKeys)
 // is not fresh, then a new session ticket key will be
 // created and prepended to c.sessionTicketKeys.
-func (c *Config) ticketKeys(configForClient *Config) []ticketKey {
+func (c *config) ticketKeys(configForClient *config) []ticketKey {
 	// If the ConfigForClient callback returned a Config with explicitly set
 	// keys, use those, otherwise just use the original Config.
 	if configForClient != nil {
@@ -976,7 +959,7 @@ func (c *Config) ticketKeys(configForClient *Config) []ticketKey {
 // all have the same session ticket keys. If the session ticket keys leaks,
 // previously recorded and future TLS connections using those keys might be
 // compromised.
-func (c *Config) SetSessionTicketKeys(keys [][32]byte) {
+func (c *config) SetSessionTicketKeys(keys [][32]byte) {
 	if len(keys) == 0 {
 		panic("tls: keys must have at least one key")
 	}
@@ -991,7 +974,7 @@ func (c *Config) SetSessionTicketKeys(keys [][32]byte) {
 	c.mutex.Unlock()
 }
 
-func (c *Config) rand() io.Reader {
+func (c *config) rand() io.Reader {
 	r := c.Rand
 	if r == nil {
 		return rand.Reader
@@ -999,7 +982,7 @@ func (c *Config) rand() io.Reader {
 	return r
 }
 
-func (c *Config) time() time.Time {
+func (c *config) time() time.Time {
 	t := c.Time
 	if t == nil {
 		t = time.Now
@@ -1007,7 +990,7 @@ func (c *Config) time() time.Time {
 	return t()
 }
 
-func (c *Config) cipherSuites() []uint16 {
+func (c *config) cipherSuites() []uint16 {
 	if needFIPS() {
 		return fipsCipherSuites(c)
 	}
@@ -1029,7 +1012,7 @@ var supportedVersions = []uint16{
 const roleClient = true
 const roleServer = false
 
-func (c *Config) supportedVersions(isClient bool) []uint16 {
+func (c *config) supportedVersions(isClient bool) []uint16 {
 	versions := make([]uint16, 0, len(supportedVersions))
 	for _, v := range supportedVersions {
 		if needFIPS() && (v < fipsMinVersion(c) || v > fipsMaxVersion(c)) {
@@ -1050,7 +1033,7 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 	return versions
 }
 
-func (c *Config) maxSupportedVersion(isClient bool) uint16 {
+func (c *config) maxSupportedVersion(isClient bool) uint16 {
 	supportedVersions := c.supportedVersions(isClient)
 	if len(supportedVersions) == 0 {
 		return 0
@@ -1074,7 +1057,7 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
 
 var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521}
 
-func (c *Config) curvePreferences() []CurveID {
+func (c *config) curvePreferences() []CurveID {
 	if needFIPS() {
 		return fipsCurvePreferences(c)
 	}
@@ -1084,7 +1067,7 @@ func (c *Config) curvePreferences() []CurveID {
 	return c.CurvePreferences
 }
 
-func (c *Config) supportsCurve(curve CurveID) bool {
+func (c *config) supportsCurve(curve CurveID) bool {
 	for _, cc := range c.curvePreferences() {
 		if cc == curve {
 			return true
@@ -1095,7 +1078,7 @@ func (c *Config) supportsCurve(curve CurveID) bool {
 
 // mutualVersion returns the protocol version to use given the advertised
 // versions of the peer. Priority is given to the peer preference order.
-func (c *Config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bool) {
+func (c *config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bool) {
 	supportedVersions := c.supportedVersions(isClient)
 	for _, peerVersion := range peerVersions {
 		for _, v := range supportedVersions {
@@ -1111,7 +1094,7 @@ var errNoCertificates = errors.New("tls: no certificates configured")
 
 // getCertificate returns the best certificate for the given ClientHelloInfo,
 // defaulting to the first element of c.Certificates.
-func (c *Config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, error) {
+func (c *config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, error) {
 	if c.GetCertificate != nil &&
 		(len(c.Certificates) == 0 || len(clientHello.ServerName) > 0) {
 		cert, err := c.GetCertificate(clientHello)
@@ -1165,7 +1148,7 @@ func (c *Config) getCertificate(clientHello *ClientHelloInfo) (*Certificate, err
 //
 // This function will call x509.ParseCertificate unless c.Leaf is set, which can
 // incur a significant performance cost.
-func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
+func (chi *clientHelloInfo) SupportsCertificate(c *Certificate) error {
 	// Note we don't currently support certificate_authorities nor
 	// signature_algorithms_cert, and don't check the algorithms of the
 	// signatures on the chain (which anyway are a SHOULD, see RFC 8446,
@@ -1175,7 +1158,8 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	if config == nil {
 		config = &Config{}
 	}
-	vers, ok := config.mutualVersion(roleServer, chi.SupportedVersions)
+	conf := fromConfig(config)
+	vers, ok := conf.mutualVersion(roleServer, chi.SupportedVersions)
 	if !ok {
 		return errors.New("no mutually supported protocol versions")
 	}
@@ -1183,7 +1167,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	// If the client specified the name they are trying to connect to, the
 	// certificate needs to be valid for it.
 	if chi.ServerName != "" {
-		x509Cert, err := c.leaf()
+		x509Cert, err := leafCertificate(c)
 		if err != nil {
 			return fmt.Errorf("failed to parse certificate: %w", err)
 		}
@@ -1213,7 +1197,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 		}
 		// Finally, there needs to be a mutual cipher suite that uses the static
 		// RSA key exchange instead of ECDHE.
-		rsaCipherSuite := selectCipherSuite(chi.CipherSuites, config.cipherSuites(), func(c *cipherSuite) bool {
+		rsaCipherSuite := selectCipherSuite(chi.CipherSuites, conf.cipherSuites(), func(c *cipherSuite) bool {
 			if c.flags&suiteECDHE != 0 {
 				return false
 			}
@@ -1244,7 +1228,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	}
 
 	// The only signed key exchange we support is ECDHE.
-	if !supportsECDHE(config, chi.SupportedCurves, chi.SupportedPoints) {
+	if !supportsECDHE(conf, chi.SupportedCurves, chi.SupportedPoints) {
 		return supportsRSAFallback(errors.New("client doesn't support ECDHE, can only use legacy RSA key exchange"))
 	}
 
@@ -1265,7 +1249,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 			}
 			var curveOk bool
 			for _, c := range chi.SupportedCurves {
-				if c == curve && config.supportsCurve(c) {
+				if c == curve && conf.supportsCurve(c) {
 					curveOk = true
 					break
 				}
@@ -1290,7 +1274,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	// Make sure that there is a mutually supported cipher suite that works with
 	// this certificate. Cipher suite selection will then apply the logic in
 	// reverse to pick it. See also serverHandshakeState.cipherSuiteOk.
-	cipherSuite := selectCipherSuite(chi.CipherSuites, config.cipherSuites(), func(c *cipherSuite) bool {
+	cipherSuite := selectCipherSuite(chi.CipherSuites, conf.cipherSuites(), func(c *cipherSuite) bool {
 		if c.flags&suiteECDHE == 0 {
 			return false
 		}
@@ -1318,7 +1302,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 // SupportsCertificate returns nil if the provided certificate is supported by
 // the server that sent the CertificateRequest. Otherwise, it returns an error
 // describing the reason for the incompatibility.
-func (cri *CertificateRequestInfo) SupportsCertificate(c *Certificate) error {
+func (cri *certificateRequestInfo) SupportsCertificate(c *Certificate) error {
 	if _, err := selectSignatureScheme(cri.Version, c, cri.SignatureSchemes); err != nil {
 		return err
 	}
@@ -1354,11 +1338,11 @@ func (cri *CertificateRequestInfo) SupportsCertificate(c *Certificate) error {
 // Deprecated: NameToCertificate only allows associating a single certificate
 // with a given name. Leave that field nil to let the library select the first
 // compatible chain from Certificates.
-func (c *Config) BuildNameToCertificate() {
+func (c *config) BuildNameToCertificate() {
 	c.NameToCertificate = make(map[string]*Certificate)
 	for i := range c.Certificates {
 		cert := &c.Certificates[i]
-		x509Cert, err := cert.leaf()
+		x509Cert, err := leafCertificate(cert)
 		if err != nil {
 			continue
 		}
@@ -1381,7 +1365,7 @@ const (
 	keyLogLabelServerTraffic   = "SERVER_TRAFFIC_SECRET_0"
 )
 
-func (c *Config) writeKeyLog(label string, clientRandom, secret []byte) error {
+func (c *config) writeKeyLog(label string, clientRandom, secret []byte) error {
 	if c.KeyLogWriter == nil {
 		return nil
 	}
@@ -1399,32 +1383,11 @@ func (c *Config) writeKeyLog(label string, clientRandom, secret []byte) error {
 // and is only for debugging, so a global mutex saves space.
 var writerMutex sync.Mutex
 
-// A Certificate is a chain of one or more certificates, leaf first.
-type Certificate struct {
-	Certificate [][]byte
-	// PrivateKey contains the private key corresponding to the public key in
-	// Leaf. This must implement crypto.Signer with an RSA, ECDSA or Ed25519 PublicKey.
-	// For a server up to TLS 1.2, it can also implement crypto.Decrypter with
-	// an RSA PublicKey.
-	PrivateKey crypto.PrivateKey
-	// SupportedSignatureAlgorithms is an optional list restricting what
-	// signature algorithms the PrivateKey can be used for.
-	SupportedSignatureAlgorithms []SignatureScheme
-	// OCSPStaple contains an optional OCSP response which will be served
-	// to clients that request it.
-	OCSPStaple []byte
-	// SignedCertificateTimestamps contains an optional list of Signed
-	// Certificate Timestamps which will be served to clients that request it.
-	SignedCertificateTimestamps [][]byte
-	// Leaf is the parsed form of the leaf certificate, which may be initialized
-	// using x509.ParseCertificate to reduce per-handshake processing. If nil,
-	// the leaf certificate will be parsed as needed.
-	Leaf *x509.Certificate
-}
+type Certificate = tls.Certificate
 
 // leaf returns the parsed leaf certificate, either from c.Leaf or by parsing
 // the corresponding c.Certificate[0].
-func (c *Certificate) leaf() (*x509.Certificate, error) {
+func leafCertificate(c *Certificate) (*x509.Certificate, error) {
 	if c.Leaf != nil {
 		return c.Leaf, nil
 	}
@@ -1533,16 +1496,4 @@ func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlg
 }
 
 // CertificateVerificationError is returned when certificate verification fails during the handshake.
-type CertificateVerificationError struct {
-	// UnverifiedCertificates and its contents should not be modified.
-	UnverifiedCertificates []*x509.Certificate
-	Err                    error
-}
-
-func (e *CertificateVerificationError) Error() string {
-	return fmt.Sprintf("tls: failed to verify certificate: %s", e.Err)
-}
-
-func (e *CertificateVerificationError) Unwrap() error {
-	return e.Err
-}
+type CertificateVerificationError = tls.CertificateVerificationError

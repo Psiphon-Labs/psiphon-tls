@@ -308,7 +308,7 @@ func (c *Conn) sessionState() (*SessionState, error) {
 
 // EncryptTicket encrypts a ticket with the Config's configured (or default)
 // session ticket keys. It can be used as a [Config.WrapSession] implementation.
-func (c *Config) EncryptTicket(cs ConnectionState, ss *SessionState) ([]byte, error) {
+func (c *config) EncryptTicket(cs ConnectionState, ss *SessionState) ([]byte, error) {
 	ticketKeys := c.ticketKeys(nil)
 	stateBytes, err := ss.Bytes()
 	if err != nil {
@@ -317,7 +317,7 @@ func (c *Config) EncryptTicket(cs ConnectionState, ss *SessionState) ([]byte, er
 	return c.encryptTicket(stateBytes, ticketKeys)
 }
 
-func (c *Config) encryptTicket(state []byte, ticketKeys []ticketKey) ([]byte, error) {
+func (c *config) encryptTicket(state []byte, ticketKeys []ticketKey) ([]byte, error) {
 	if len(ticketKeys) == 0 {
 		return nil, errors.New("tls: internal error: session ticket keys unavailable")
 	}
@@ -349,7 +349,7 @@ func (c *Config) encryptTicket(state []byte, ticketKeys []ticketKey) ([]byte, er
 // be used as a [Config.UnwrapSession] implementation.
 //
 // If the ticket can't be decrypted or parsed, DecryptTicket returns (nil, nil).
-func (c *Config) DecryptTicket(identity []byte, cs ConnectionState) (*SessionState, error) {
+func (c *config) DecryptTicket(identity []byte, cs ConnectionState) (*SessionState, error) {
 	ticketKeys := c.ticketKeys(nil)
 	stateBytes := c.decryptTicket(identity, ticketKeys)
 	if stateBytes == nil {
@@ -362,7 +362,7 @@ func (c *Config) DecryptTicket(identity []byte, cs ConnectionState) (*SessionSta
 	return s, nil
 }
 
-func (c *Config) decryptTicket(encrypted []byte, ticketKeys []ticketKey) []byte {
+func (c *config) decryptTicket(encrypted []byte, ticketKeys []ticketKey) []byte {
 	if len(encrypted) < aes.BlockSize+sha256.Size {
 		return nil
 	}

@@ -1,3 +1,4 @@
+// Code borrowd from https://github.com/quic-go/qtls-go1-20
 package tls
 
 import (
@@ -145,6 +146,20 @@ func TestConnectionStateReinterpretCast(t *testing.T) {
 	}
 }
 
+func TestInitSessionTicketKeys(t *testing.T) {
+	c1 := testConfig.Clone()
+	InitSessionTicketKeys(c1)
+	c2 := c1.Clone()
+
+	stk := fromConfig(c1).autoSessionTicketKeys
+	if len(stk) == 0 {
+		t.Fatal("no session ticket keys")
+	}
+	if !reflect.DeepEqual(stk, fromConfig(c2).autoSessionTicketKeys) {
+		t.Fatal("session ticket keys don't match")
+	}
+}
+
 func TestClientSessionStateReinterpretCast(t *testing.T) {
 	state := &clientSessionState{
 		ticket: []byte("foobar"),
@@ -157,4 +172,112 @@ func TestClientSessionStateReinterpretCast(t *testing.T) {
 	if !reflect.DeepEqual(fromClientSessionState(toClientSessionState(state)), state) {
 		t.Fatal("failed")
 	}
+}
+
+func TestCasting(t *testing.T) {
+
+	// Simple structs
+
+	type s1 struct {
+		f1_int       int
+		f2_str       string
+		f3_sbyte     []byte
+		f4_abyte     [2]byte
+		f5_ptr       *int
+		f6_ptr_slice *[]byte
+	}
+
+	type s1_prime struct {
+		f1_int       int
+		f2_str       string
+		f3_sbyte     []byte
+		f4_abyte     [2]byte
+		f5_ptr       *int
+		f6_ptr_slice *[]byte
+	}
+
+	if !structsEqual(s1{}, s1{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	if !structsEqual(s1{}, s1_prime{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	if !structsEqual(&s1{}, &s1_prime{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	if !structsEqual([]*s1{}, []*s1_prime{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	// Composite structs
+
+	type s2 struct {
+		f1_a            s1
+		f2_a_ptr        *s1
+		f3_a_slice      []s1
+		f4_a_ptr_slice  []*s1
+		f5_copied_field s1
+	}
+
+	type s2_prime struct {
+		f1_a            s1
+		f2_a_ptr        *s1
+		f3_a_slice      []s1
+		f4_a_ptr_slice  []*s1
+		f5_copied_field s1_prime
+	}
+
+	// Tests if all embedded structs are type checked by structsEqual.
+	type s_bad struct {
+		f1_a            s1
+		f2_a_ptr        *s1
+		f3_a_slice      []s1
+		f4_a_ptr_slice  []*s1_prime
+		f5_copied_field s2
+	}
+
+	if !structsEqual(s2{}, s2_prime{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	if structsEqual(s2{}, s_bad{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	// Funcs
+	type f1 struct {
+		f1 func()
+		f2 func() int
+		f3 func(string) *int
+		f4 func() s1
+		f5 func(s1) (s1, error)
+	}
+
+	type f1_prime struct {
+		f1 func()
+		f2 func() int
+		f3 func(string) *int
+		f4 func() s1_prime
+		f5 func(s1_prime) (s1_prime, error)
+	}
+
+	type f2 struct {
+		f1 func()
+		f2 func() int
+		f3 func(string) *int
+		f4 func() int
+		f5 func(s1) (s1, error)
+	}
+
+	if !structsEqual(f1{}, f1_prime{}) {
+		t.Fatal("structsEqual failed")
+	}
+
+	if structsEqual(f1{}, f2{}) {
+		t.Fatal("structsEqual failed")
+	}
+
 }

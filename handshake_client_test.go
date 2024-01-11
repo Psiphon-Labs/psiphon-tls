@@ -928,7 +928,7 @@ func testResumption(t *testing.T, version uint16) {
 	}
 	randomKey := func() [32]byte {
 		var k [32]byte
-		if _, err := io.ReadFull(serverConfig.rand(), k[:]); err != nil {
+		if _, err := io.ReadFull(fromConfig(serverConfig).rand(), k[:]); err != nil {
 			t.Fatalf("Failed to read new SessionTicketKey: %s", err)
 		}
 		return k
@@ -2785,7 +2785,7 @@ u58=
 func TestHandshakeRSATooBig(t *testing.T) {
 	testCert, _ := pem.Decode([]byte(largeRSAKeyCertPEM))
 
-	c := &Conn{conn: &discardConn{}, config: testConfig.Clone()}
+	c := &Conn{conn: &discardConn{}, config: fromConfig(testConfig.Clone())}
 
 	expectedErr := "tls: server sent certificate containing RSA key larger than 8192 bits"
 	err := c.verifyServerCertificate([][]byte{testCert.Bytes})
