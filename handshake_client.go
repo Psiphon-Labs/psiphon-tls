@@ -328,7 +328,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 	if !ok || cs == nil {
 		return nil, nil, nil, nil
 	}
-	session = cs.session
+	session = fromClientSessionState(cs).session
 
 	// Check that version used for the previous session is still valid.
 	versOk := false
@@ -367,7 +367,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 			return nil, nil, nil, nil
 		}
 
-		hello.sessionTicket = cs.ticket
+		hello.sessionTicket = fromClientSessionState(cs).ticket
 		return
 	}
 
@@ -411,7 +411,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 	// Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.
 	ticketAge := c.config.time().Sub(time.Unix(int64(session.createdAt), 0))
 	identity := pskIdentity{
-		label:               cs.ticket,
+		label:               fromClientSessionState(cs).ticket,
 		obfuscatedTicketAge: uint32(ticketAge/time.Millisecond) + session.ageAdd,
 	}
 	hello.pskIdentities = []pskIdentity{identity}
@@ -937,8 +937,8 @@ func (hs *clientHandshakeState) saveSessionTicket() error {
 	}
 	session.secret = hs.masterSecret
 
-	cs := &ClientSessionState{ticket: hs.ticket, session: session}
-	c.config.ClientSessionCache.Put(cacheKey, cs)
+	cs := &clientSessionState{ticket: hs.ticket, session: session}
+	c.config.ClientSessionCache.Put(cacheKey, toClientSessionState(cs))
 	return nil
 }
 

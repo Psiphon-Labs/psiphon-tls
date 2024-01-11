@@ -10,6 +10,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -393,9 +394,11 @@ func (c *Config) decryptTicket(encrypted []byte, ticketKeys []ticketKey) []byte 
 	return nil
 }
 
+type ClientSessionState = tls.ClientSessionState
+
 // ClientSessionState contains the state needed by a client to
 // resume a previous TLS session.
-type ClientSessionState struct {
+type clientSessionState struct {
 	ticket  []byte
 	session *SessionState
 }
@@ -405,7 +408,7 @@ type ClientSessionState struct {
 //
 // It can be called by [ClientSessionCache.Put] to serialize (with
 // [SessionState.Bytes]) and store the session.
-func (cs *ClientSessionState) ResumptionState() (ticket []byte, state *SessionState, err error) {
+func (cs *clientSessionState) ResumptionState() (ticket []byte, state *SessionState, err error) {
 	return cs.ticket, cs.session, nil
 }
 
@@ -415,7 +418,8 @@ func (cs *ClientSessionState) ResumptionState() (ticket []byte, state *SessionSt
 // state needs to be returned by [ParseSessionState], and the ticket and session
 // state must have been returned by [ClientSessionState.ResumptionState].
 func NewResumptionState(ticket []byte, state *SessionState) (*ClientSessionState, error) {
-	return &ClientSessionState{
+	cs := &clientSessionState{
 		ticket: ticket, session: state,
-	}, nil
+	}
+	return toClientSessionState(cs), nil
 }
