@@ -49,6 +49,8 @@ type QUICConn struct {
 // A QUICConfig configures a QUICConn.
 type QUICConfig struct {
 	TLSConfig *Config
+	// [Psiphon]
+	ExtraConfig *ExtraConfig
 }
 
 // A QUICEventKind is a type of operation on a QUIC connection.

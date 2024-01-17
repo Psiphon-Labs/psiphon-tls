@@ -41,6 +41,7 @@ type Conn struct {
 	vers           uint16  // TLS version
 	haveVers       bool    // version has been negotiated
 	config         *Config // configuration passed to constructor
+	extraConfig    *ExtraConfig
 	// handshakes counts the number of handshakes performed on the
 	// connection so far. If renegotiation is disabled then this is either
 	// zero or one.
@@ -1063,6 +1064,26 @@ func (c *Conn) writeChangeCipherRecord() error {
 	defer c.out.Unlock()
 	_, err := c.writeRecordLocked(recordTypeChangeCipherSpec, []byte{1})
 	return err
+}
+
+// [Psiphon]
+func ReadClientHelloRandom(data []byte) ([]byte, error) {
+	if len(data) < 1 {
+		return nil, errors.New("tls: missing message type")
+	}
+	if data[0] != typeClientHello {
+		return nil, errors.New("tls: unexpected message type")
+	}
+
+	// Unlike readHandshake, m is not retained and so making a copy of the
+	// input data is not necessary.
+
+	var m clientHelloMsg
+	if !m.unmarshal(data) {
+		return nil, errors.New("tls: unexpected message")
+	}
+
+	return m.random, nil
 }
 
 // readHandshakeBytes reads handshake data until c.hand contains at least n bytes.

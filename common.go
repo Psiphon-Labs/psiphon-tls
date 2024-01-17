@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 )
 
 const (
@@ -783,6 +785,18 @@ type Config struct {
 	// autoSessionTicketKeys is like sessionTicketKeys but is owned by the
 	// auto-rotation logic. See Config.ticketKeys.
 	autoSessionTicketKeys []ticketKey
+}
+
+// [Psiphon]
+type ExtraConfig struct {
+	// ClientHelloPRNG is used for Client Hello randomization and replay.
+	ClientHelloPRNG *prng.PRNG
+
+	// GetClientHelloRandom is used to supply a specific value in the TLS
+	// Client Hello random field. This is used to send an anti-probing
+	// message, indistinguishable from random, that proves knowlegde of a
+	// shared secret key.
+	GetClientHelloRandom func() ([]byte, error)
 }
 
 const (
