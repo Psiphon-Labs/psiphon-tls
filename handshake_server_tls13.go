@@ -287,16 +287,17 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 			break
 		}
 
-		var sessionState *SessionState
+		var sessionState *sessionState
 		if c.config.UnwrapSession != nil {
 			var err error
-			sessionState, err = c.config.UnwrapSession(identity.label, c.connectionStateLocked())
+			ss, err := c.config.UnwrapSession(identity.label, c.connectionStateLocked())
 			if err != nil {
 				return err
 			}
-			if sessionState == nil {
+			if ss == nil {
 				continue
 			}
+			sessionState = fromSessionState(ss)
 		} else {
 			plaintext := c.config.decryptTicket(identity.label, c.ticketKeys)
 			if plaintext == nil {
@@ -836,7 +837,7 @@ func (c *Conn) sendSessionTicket(earlyData bool) error {
 	state.secret = psk
 	state.EarlyData = earlyData
 	if c.config.WrapSession != nil {
-		m.label, err = c.config.WrapSession(c.connectionStateLocked(), state)
+		m.label, err = c.config.WrapSession(c.connectionStateLocked(), toSessionState(state))
 		if err != nil {
 			return err
 		}

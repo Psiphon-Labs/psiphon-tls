@@ -36,7 +36,7 @@ var tests = []handshakeMessage{
 	&newSessionTicketMsgTLS13{},
 	&certificateRequestMsgTLS13{},
 	&certificateMsgTLS13{},
-	&SessionState{},
+	&sessionState{},
 }
 
 func mustMarshal(t *testing.T, msg handshakeMessage) []byte {
@@ -73,7 +73,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 			}
 			m.marshal() // to fill any marshal cache in the message
 
-			if m, ok := m.(*SessionState); ok {
+			if m, ok := m.(*sessionState); ok {
 				m.activeCertHandles = nil
 			}
 
@@ -343,8 +343,8 @@ func init() {
 	sessionTestCerts = append(sessionTestCerts, cert)
 }
 
-func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
-	s := &SessionState{}
+func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
+	s := &sessionState{}
 	isTLS13 := rand.Intn(10) > 5
 	if isTLS13 {
 		s.version = VersionTLS13
@@ -400,8 +400,8 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	return reflect.ValueOf(s)
 }
 
-func (s *SessionState) marshal() ([]byte, error) { return s.Bytes() }
-func (s *SessionState) unmarshal(b []byte) bool {
+func (s *sessionState) marshal() ([]byte, error) { return s.Bytes() }
+func (s *sessionState) unmarshal(b []byte) bool {
 	ss, err := ParseSessionState(b)
 	if err != nil {
 		return false

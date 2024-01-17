@@ -31,7 +31,7 @@ type clientHandshakeState struct {
 	suite        *cipherSuite
 	finishedHash finishedHash
 	masterSecret []byte
-	session      *SessionState // the session being resumed
+	session      *sessionState // the session being resumed
 	ticket       []byte        // a fresh ticket received during this handshake
 }
 
@@ -299,7 +299,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 }
 
 func (c *Conn) loadSession(hello *clientHelloMsg) (
-	session *SessionState, earlySecret, binderKey []byte, err error) {
+	session *sessionState, earlySecret, binderKey []byte, err error) {
 	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
 		return nil, nil, nil, nil
 	}

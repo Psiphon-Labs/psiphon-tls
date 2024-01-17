@@ -23,7 +23,7 @@ type clientHandshakeStateTLS13 struct {
 	hello       *clientHelloMsg
 	ecdheKey    *ecdh.PrivateKey
 
-	session     *SessionState
+	session     *sessionState
 	earlySecret []byte
 	binderKey   []byte
 

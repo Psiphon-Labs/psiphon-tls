@@ -15,6 +15,9 @@ func init() {
 	if !structsEqual(&tls.ClientSessionState{}, &clientSessionState{}) {
 		panic("qtls.ClientSessionState doesn't match")
 	}
+	if !structsEqual(&tls.SessionState{}, &sessionState{}) {
+		panic("qtls.SessionState doesn't match")
+	}
 	if !structsEqual(&tls.CertificateRequestInfo{}, &certificateRequestInfo{}) {
 		panic("qtls.CertificateRequestInfo doesn't match")
 	}
@@ -32,6 +35,14 @@ func toConnectionState(c connectionState) ConnectionState {
 
 func toClientSessionState(s *clientSessionState) *ClientSessionState {
 	return (*ClientSessionState)(unsafe.Pointer(s))
+}
+
+func toSessionState(ss *sessionState) *SessionState {
+	return (*SessionState)(unsafe.Pointer(ss))
+}
+
+func fromSessionState(ss *SessionState) *sessionState {
+	return (*sessionState)(unsafe.Pointer(ss))
 }
 
 func fromClientSessionState(s *ClientSessionState) *clientSessionState {

@@ -163,7 +163,7 @@ func TestInitSessionTicketKeys(t *testing.T) {
 func TestClientSessionStateReinterpretCast(t *testing.T) {
 	state := &clientSessionState{
 		ticket: []byte("foobar"),
-		session: &SessionState{
+		session: &sessionState{
 			version: VersionTLS13,
 			useBy:   uint64(time.Now().Add(time.Hour).Unix()),
 			ageAdd:  1234,

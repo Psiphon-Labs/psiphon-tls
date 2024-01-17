@@ -31,7 +31,7 @@ type serverHandshakeState struct {
 	ecSignOk     bool
 	rsaDecryptOk bool
 	rsaSignOk    bool
-	sessionState *SessionState
+	sessionState *sessionState
 	finishedHash finishedHash
 	masterSecret []byte
 	cert         *Certificate
@@ -410,7 +410,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 		return nil
 	}
 
-	var sessionState *SessionState
+	var sessionState *sessionState
 	if c.config.UnwrapSession != nil {
 		ss, err := c.config.UnwrapSession(hs.clientHello.sessionTicket, c.connectionStateLocked())
 		if err != nil {
@@ -419,7 +419,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 		if ss == nil {
 			return nil
 		}
-		sessionState = ss
+		sessionState = fromSessionState(ss)
 	} else {
 		plaintext := c.config.decryptTicket(hs.clientHello.sessionTicket, c.ticketKeys)
 		if plaintext == nil {
@@ -814,7 +814,7 @@ func (hs *serverHandshakeState) sendSessionTicket() error {
 		state.createdAt = hs.sessionState.createdAt
 	}
 	if c.config.WrapSession != nil {
-		m.ticket, err = c.config.WrapSession(c.connectionStateLocked(), state)
+		m.ticket, err = c.config.WrapSession(c.connectionStateLocked(), toSessionState(state))
 		if err != nil {
 			return err
 		}
