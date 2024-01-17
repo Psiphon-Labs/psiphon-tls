@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -236,7 +237,9 @@ const (
 var testingOnlyForceDowngradeCanary bool
 
 // ConnectionState records basic TLS details about the connection.
-type ConnectionState struct {
+type ConnectionState = tls.ConnectionState
+
+type connectionState struct {
 	// Version is the TLS version used by the connection (e.g. VersionTLS12).
 	Version uint16
 
@@ -310,9 +313,9 @@ type ConnectionState struct {
 // There are conditions in which the returned values might not be unique to a
 // connection. See the Security Considerations sections of RFC 5705 and RFC 7627,
 // and https://mitls.org/pages/attacks/3SHAKE#channelbindings.
-func (cs *ConnectionState) ExportKeyingMaterial(label string, context []byte, length int) ([]byte, error) {
-	return cs.ekm(label, context, length)
-}
+// func (cs *ConnectionState) ExportKeyingMaterial(label string, context []byte, length int) ([]byte, error) {
+// 	return cs.ekm(label, context, length)
+// }
 
 // ClientAuthType declares the policy the server will follow for
 // TLS Client Authentication.
