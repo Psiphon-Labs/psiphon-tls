@@ -840,7 +840,7 @@ func (c *Conn) sendAlertLocked(err alert) error {
 	// This changes the nature of errors that such clients may report when their
 	// TLS handshake fails. This change in behavior is only visible to legitimate
 	// clients.
-	if c.extraConfig.PassthroughAddress != "" &&
+	if c.extraConfig != nil && c.extraConfig.PassthroughAddress != "" &&
 		c.conn.(*recorderConn).IsRecording() {
 		return nil
 	}

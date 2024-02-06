@@ -26,6 +26,12 @@ import (
 	"time"
 )
 
+func init() {
+	// [Psiphon]
+	// Disable obfuscation and randomization since its transforms won't match pre-recorded test data
+	obfuscateSessionTickets = false
+}
+
 func testClientHello(t *testing.T, serverConfig *Config, m handshakeMessage) {
 	t.Helper()
 	testClientHelloFailure(t, serverConfig, m, "")
@@ -41,7 +47,7 @@ func testFatal(t *testing.T, err error) {
 func testClientHelloFailure(t *testing.T, serverConfig *Config, m handshakeMessage, expectedSubStr string) {
 	c, s := localPipe(t)
 	go func() {
-		cli := Client(c, testConfig)
+		cli := Client(c, testConfig, nil)
 		if ch, ok := m.(*clientHelloMsg); ok {
 			cli.vers = ch.vers
 		}
@@ -51,7 +57,7 @@ func testClientHelloFailure(t *testing.T, serverConfig *Config, m handshakeMessa
 		c.Close()
 	}()
 	ctx := context.Background()
-	conn := Server(s, serverConfig)
+	conn := Server(s, serverConfig, nil)
 	ch, err := conn.readClientHello(ctx)
 	if err == nil && conn.vers == VersionTLS13 {
 		hs := serverHandshakeStateTLS13{
@@ -211,7 +217,7 @@ func TestRenegotiationExtension(t *testing.T) {
 	c, s := localPipe(t)
 
 	go func() {
-		cli := Client(c, testConfig)
+		cli := Client(c, testConfig, nil)
 		cli.vers = clientHello.vers
 		if _, err := cli.writeHandshakeRecord(clientHello, nil); err != nil {
 			testFatal(t, err)
@@ -227,7 +233,7 @@ func TestRenegotiationExtension(t *testing.T) {
 		bufChan <- buf[:n]
 	}()
 
-	Server(s, testConfig).Handshake()
+	Server(s, testConfig, nil).Handshake()
 	buf := <-bufChan
 
 	if len(buf) < 5+4 {
@@ -272,7 +278,7 @@ func TestTLS12OnlyCipherSuites(t *testing.T) {
 	c, s := localPipe(t)
 	replyChan := make(chan any)
 	go func() {
-		cli := Client(c, testConfig)
+		cli := Client(c, testConfig, nil)
 		cli.vers = clientHello.vers
 		if _, err := cli.writeHandshakeRecord(clientHello, nil); err != nil {
 			testFatal(t, err)
@@ -287,7 +293,7 @@ func TestTLS12OnlyCipherSuites(t *testing.T) {
 	}()
 	config := testConfig.Clone()
 	config.CipherSuites = clientHello.cipherSuites
-	Server(s, config).Handshake()
+	Server(s, config, nil).Handshake()
 	s.Close()
 	reply := <-replyChan
 	if err, ok := reply.(error); ok {
@@ -332,7 +338,7 @@ func TestTLSPointFormats(t *testing.T) {
 			c, s := localPipe(t)
 			replyChan := make(chan any)
 			go func() {
-				cli := Client(c, testConfig)
+				cli := Client(c, testConfig, nil)
 				cli.vers = clientHello.vers
 				if _, err := cli.writeHandshakeRecord(clientHello, nil); err != nil {
 					testFatal(t, err)
@@ -347,7 +353,7 @@ func TestTLSPointFormats(t *testing.T) {
 			}()
 			config := testConfig.Clone()
 			config.CipherSuites = clientHello.cipherSuites
-			Server(s, config).Handshake()
+			Server(s, config, nil).Handshake()
 			s.Close()
 			reply := <-replyChan
 			if err, ok := reply.(error); ok {
@@ -373,11 +379,11 @@ func TestTLSPointFormats(t *testing.T) {
 func TestAlertForwarding(t *testing.T) {
 	c, s := localPipe(t)
 	go func() {
-		Client(c, testConfig).sendAlert(alertUnknownCA)
+		Client(c, testConfig, nil).sendAlert(alertUnknownCA)
 		c.Close()
 	}()
 
-	err := Server(s, testConfig).Handshake()
+	err := Server(s, testConfig, nil).Handshake()
 	s.Close()
 	var opErr *net.OpError
 	if !errors.As(err, &opErr) || opErr.Err != error(alertUnknownCA) {
@@ -389,7 +395,7 @@ func TestClose(t *testing.T) {
 	c, s := localPipe(t)
 	go c.Close()
 
-	err := Server(s, testConfig).Handshake()
+	err := Server(s, testConfig, nil).Handshake()
 	s.Close()
 	if err != io.EOF {
 		t.Errorf("Got error: %s; expected: %s", err, io.EOF)
@@ -673,7 +679,7 @@ func (test *serverTest) run(t *testing.T, write bool) {
 	if config == nil {
 		config = testConfig
 	}
-	server := Server(serverConn, config)
+	server := Server(serverConn, config, nil)
 	connStateChan := make(chan ConnectionState, 1)
 	go func() {
 		_, err := server.Write([]byte("hello, world\n"))
@@ -1268,10 +1274,10 @@ func benchmarkHandshakeServer(b *testing.B, version uint16, cipherSuite uint16, 
 		config := testConfig.Clone()
 		config.MaxVersion = version
 		config.CurvePreferences = []CurveID{curve}
-		client := Client(clientConn, config)
+		client := Client(clientConn, config, nil)
 		client.Handshake()
 	}()
-	server := Server(serverConn, config)
+	server := Server(serverConn, config, nil)
 	if err := server.Handshake(); err != nil {
 		b.Fatalf("handshake failed: %v", err)
 	}
@@ -1303,7 +1309,7 @@ func benchmarkHandshakeServer(b *testing.B, version uint16, cipherSuite uint16, 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		feeder <- struct{}{}
-		server := Server(serverConn, config)
+		server := Server(serverConn, config, nil)
 		if err := server.Handshake(); err != nil {
 			b.Fatalf("handshake failed: %v", err)
 		}
@@ -1449,14 +1455,14 @@ func TestSNIGivenOnFailure(t *testing.T) {
 
 	c, s := localPipe(t)
 	go func() {
-		cli := Client(c, testConfig)
+		cli := Client(c, testConfig, nil)
 		cli.vers = clientHello.vers
 		if _, err := cli.writeHandshakeRecord(clientHello, nil); err != nil {
 			testFatal(t, err)
 		}
 		c.Close()
 	}()
-	conn := Server(s, serverConfig)
+	conn := Server(s, serverConfig, nil)
 	ctx := context.Background()
 	ch, err := conn.readClientHello(ctx)
 	hs := serverHandshakeState{
@@ -1588,10 +1594,10 @@ func TestGetConfigForClient(t *testing.T) {
 
 		go func() {
 			defer s.Close()
-			done <- Server(s, serverConfig).Handshake()
+			done <- Server(s, serverConfig, nil).Handshake()
 		}()
 
-		clientErr := Client(c, clientConfig).Handshake()
+		clientErr := Client(c, clientConfig, nil).Handshake()
 		c.Close()
 
 		serverErr := <-done
@@ -1617,7 +1623,7 @@ func TestGetConfigForClient(t *testing.T) {
 
 func TestCloseServerConnectionOnIdleClient(t *testing.T) {
 	clientConn, serverConn := localPipe(t)
-	server := Server(serverConn, testConfig.Clone())
+	server := Server(serverConn, testConfig.Clone(), nil)
 	go func() {
 		clientConn.Write([]byte{'0'})
 		server.Close()
@@ -1676,13 +1682,13 @@ T+E0J8wlH24pgwQHzy7Ko2qLwn1b5PW8ecrlvP1g
 	}
 
 	clientConn, serverConn := localPipe(t)
-	client := Client(clientConn, testConfig)
+	client := Client(clientConn, testConfig, nil)
 	done := make(chan struct{})
 	go func() {
 		config := testConfig.Clone()
 		config.Certificates = []Certificate{cert}
 		config.MinVersion = VersionTLS13
-		server := Server(serverConn, config)
+		server := Server(serverConn, config, nil)
 		err := server.Handshake()
 		expectError(t, err, "key size too small")
 		close(done)
@@ -1968,7 +1974,7 @@ func TestServerHandshakeContextCancellation(t *testing.T) {
 		<-unblockClient
 		_ = c.Close()
 	}()
-	conn := Server(s, testConfig)
+	conn := Server(s, testConfig, nil)
 	// Initiates server side handshake, which will block until a client hello is read
 	// unless the cancellation works.
 	err := conn.HandshakeContext(ctx)
@@ -2016,7 +2022,7 @@ func TestHandshakeContextHierarchy(t *testing.T) {
 				PrivateKey:  testRSAPrivateKey,
 			}, nil
 		}
-		cli := Client(c, clientConfig)
+		cli := Client(c, clientConfig, nil)
 		err := cli.HandshakeContext(ctx)
 		if err != nil {
 			clientErr <- err
@@ -2041,7 +2047,7 @@ func TestHandshakeContextHierarchy(t *testing.T) {
 			PrivateKey:  testRSAPrivateKey,
 		}, nil
 	}
-	conn := Server(s, serverConfig)
+	conn := Server(s, serverConfig, nil)
 	err := conn.HandshakeContext(ctx)
 	if err != nil {
 		t.Errorf("Unexpected server handshake error: %v", err)

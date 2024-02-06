@@ -22,7 +22,7 @@ import (
 )
 
 // [Psiphon]
-var obfuscatedSessionTickets = true
+var obfuscateSessionTickets = true
 
 // A sessionState is a resumable session.
 type SessionState = tls.SessionState
@@ -183,7 +183,7 @@ func (s *sessionState) Bytes() ([]byte, error) {
 
 	// [Psiphon]
 	// Pad golang TLS session ticket to a more typical size.
-	if obfuscatedSessionTickets {
+	if obfuscateSessionTickets {
 		paddedSizes := []int{160, 176, 192, 208, 218, 224, 240, 255}
 		initialSize := 120
 		randomInt, err := rand.Int(rand.Reader, big.NewInt(int64(len(paddedSizes))))

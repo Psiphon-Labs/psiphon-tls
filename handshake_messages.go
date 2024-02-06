@@ -2215,7 +2215,7 @@ func (m *newSessionTicketMsg) marshal() ([]byte, error) {
 
 	// [Psiphon]
 	// Set lifetime hint to a more typical value.
-	if obfuscatedSessionTickets {
+	if obfuscateSessionTickets {
 		hints := []int{300, 1200, 7200, 10800, 64800, 100800, 129600}
 		index := prng.Intn(len(hints))
 		hint := hints[index]

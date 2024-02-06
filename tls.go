@@ -36,7 +36,7 @@ func Server(conn net.Conn, config *Config, extraConfig *ExtraConfig) *Conn {
 	// [Psiphon]
 	// Initialize traffic recording to facilitate playback in the case of
 	// passthrough.
-	if extraConfig.PassthroughAddress != "" {
+	if extraConfig != nil && extraConfig.PassthroughAddress != "" {
 		conn = newRecorderConn(conn)
 	}
 

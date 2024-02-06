@@ -70,7 +70,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 	// continue reference a net.Conn, albeit one that is closed, so Reads and
 	// Writes will fail.
 
-	if c.extraConfig.PassthroughAddress != "" {
+	if c.extraConfig != nil && c.extraConfig.PassthroughAddress != "" {
 
 		doPassthrough := false
 
@@ -658,7 +658,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 
 	// [Psiphon]
 	// Skip ticket lifetime check when using obfuscated session tickets.
-	if !c.extraConfig.UseObfuscatedSessionTickets {
+	if c.extraConfig == nil || !c.extraConfig.UseObfuscatedSessionTickets {
 
 		// TLS 1.2 tickets don't natively have a lifetime, but we want to avoid
 		// re-wrapping the same master secret in different tickets over and over for
@@ -716,7 +716,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 	// state never uses EMS. ClientHellos vary in EMS support. So, in this mode,
 	// skip this check to ensure the obfuscated session tickets are not
 	// rejected.
-	if !c.extraConfig.UseObfuscatedSessionTickets {
+	if c.extraConfig == nil || !c.extraConfig.UseObfuscatedSessionTickets {
 		if !sessionState.extMasterSecret && hs.clientHello.extendedMasterSecret {
 			return nil
 		}

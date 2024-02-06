@@ -858,7 +858,7 @@ func (c *Conn) sendSessionTicket(earlyData bool) error {
 
 	// [Psiphon]
 	// Set lifetime hint to a more typical value.
-	if obfuscatedSessionTickets {
+	if obfuscateSessionTickets {
 		hints := []uint32{300, 1200, 7200, 10800, 64800, 100800, 129600}
 		index := prng.Intn(len(hints))
 		m.lifetime = hints[index]
