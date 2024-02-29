@@ -244,7 +244,7 @@ func TestDeadlineOnWrite(t *testing.T) {
 			srvCh <- nil
 			return
 		}
-		srv := Server(sconn, testConfig.Clone(), nil)
+		srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: testConfig.Clone()})
 		if err := srv.Handshake(); err != nil {
 			srvCh <- nil
 			return
@@ -383,7 +383,7 @@ func testConnReadNonzeroAndEOF(t *testing.T, delay time.Duration) error {
 			return
 		}
 		serverConfig := testConfig.Clone()
-		srv := Server(sconn, serverConfig, nil)
+		srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 		if err := srv.Handshake(); err != nil {
 			serr = fmt.Errorf("handshake: %v", err)
 			srvCh <- nil
@@ -446,7 +446,7 @@ func TestTLSUniqueMatches(t *testing.T) {
 			}
 			serverConfig := testConfig.Clone()
 			serverConfig.MaxVersion = VersionTLS12 // TLSUnique is not defined in TLS 1.3
-			srv := Server(sconn, serverConfig, nil)
+			srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 			if err := srv.Handshake(); err != nil {
 				t.Error(err)
 				return
@@ -543,7 +543,7 @@ func TestConnCloseBreakingWrite(t *testing.T) {
 			return
 		}
 		serverConfig := testConfig.Clone()
-		srv := Server(sconn, serverConfig, nil)
+		srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 		if err := srv.Handshake(); err != nil {
 			serr = fmt.Errorf("handshake: %v", err)
 			srvCh <- nil
@@ -563,7 +563,7 @@ func TestConnCloseBreakingWrite(t *testing.T) {
 	}
 
 	clientConfig := testConfig.Clone()
-	tconn := Client(conn, clientConfig, nil)
+	tconn := Client(conn, &ExtendedTLSConfig{TLSConfig: clientConfig})
 	if err := tconn.Handshake(); err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestConnCloseWrite(t *testing.T) {
 		defer sconn.Close()
 
 		serverConfig := testConfig.Clone()
-		srv := Server(sconn, serverConfig, nil)
+		srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 		if err := srv.Handshake(); err != nil {
 			return fmt.Errorf("handshake: %v", err)
 		}
@@ -704,7 +704,7 @@ func TestConnCloseWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer netConn.Close()
-		conn := Client(netConn, testConfig.Clone(), nil)
+		conn := Client(netConn, &ExtendedTLSConfig{TLSConfig: testConfig.Clone()})
 
 		if err := conn.CloseWrite(); err != errEarlyCloseWrite {
 			t.Errorf("CloseWrite error = %v; want errEarlyCloseWrite", err)
@@ -724,7 +724,7 @@ func TestWarningAlertFlood(t *testing.T) {
 		defer sconn.Close()
 
 		serverConfig := testConfig.Clone()
-		srv := Server(sconn, serverConfig, nil)
+		srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 		if err := srv.Handshake(); err != nil {
 			return fmt.Errorf("handshake: %v", err)
 		}
@@ -935,7 +935,7 @@ func throughput(b *testing.B, version uint16, totalBytes int64, dynamicRecordSiz
 			serverConfig := testConfig.Clone()
 			serverConfig.CipherSuites = nil // the defaults may prefer faster ciphers
 			serverConfig.DynamicRecordSizingDisabled = dynamicRecordSizingDisabled
-			srv := Server(sconn, serverConfig, nil)
+			srv := Server(sconn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 			if err := srv.Handshake(); err != nil {
 				panic(fmt.Errorf("handshake: %v", err))
 			}
@@ -1032,7 +1032,7 @@ func latency(b *testing.B, version uint16, bps int, dynamicRecordSizingDisabled 
 			}
 			serverConfig := testConfig.Clone()
 			serverConfig.DynamicRecordSizingDisabled = dynamicRecordSizingDisabled
-			srv := Server(&slowConn{sconn, bps}, serverConfig, nil)
+			srv := Server(&slowConn{sconn, bps}, &ExtendedTLSConfig{TLSConfig: serverConfig})
 			if err := srv.Handshake(); err != nil {
 				panic(fmt.Errorf("handshake: %v", err))
 			}

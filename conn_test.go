@@ -130,7 +130,7 @@ func runDynamicRecordSizingTest(t *testing.T, config *Config) {
 
 	serverConfig := config.Clone()
 	serverConfig.DynamicRecordSizingDisabled = false
-	tlsConn := Server(serverConn, serverConfig, nil)
+	tlsConn := Server(serverConn, &ExtendedTLSConfig{TLSConfig: serverConfig})
 
 	handshakeDone := make(chan struct{})
 	recordSizesChan := make(chan []int, 1)
@@ -142,7 +142,7 @@ func runDynamicRecordSizingTest(t *testing.T, config *Config) {
 		defer close(recordSizesChan)
 		defer clientConn.Close()
 
-		tlsConn := Client(clientConn, config, nil)
+		tlsConn := Client(clientConn, &ExtendedTLSConfig{TLSConfig: config})
 		if err := tlsConn.Handshake(); err != nil {
 			t.Errorf("Error from client handshake: %v", err)
 			return
@@ -275,11 +275,12 @@ func TestHairpinInClose(t *testing.T) {
 	defer client.Close()
 
 	conn := &hairpinConn{client, nil}
-	tlsConn := Server(conn, &Config{
-		GetCertificate: func(*ClientHelloInfo) (*Certificate, error) {
-			panic("unreachable")
-		},
-	}, nil)
+	tlsConn := Server(conn, &ExtendedTLSConfig{
+		TLSConfig: &Config{
+			GetCertificate: func(*ClientHelloInfo) (*Certificate, error) {
+				panic("unreachable")
+			},
+		}})
 	conn.tlsConn = tlsConn
 
 	// This call should not deadlock.
@@ -295,7 +296,7 @@ func TestRecordBadVersionTLS13(t *testing.T) {
 	config.MinVersion, config.MaxVersion = VersionTLS13, VersionTLS13
 
 	go func() {
-		tlsConn := Client(client, config, nil)
+		tlsConn := Client(client, &ExtendedTLSConfig{TLSConfig: config})
 		if err := tlsConn.Handshake(); err != nil {
 			t.Errorf("Error from client handshake: %v", err)
 			return
@@ -304,7 +305,7 @@ func TestRecordBadVersionTLS13(t *testing.T) {
 		tlsConn.Write([]byte{1})
 	}()
 
-	tlsConn := Server(server, config, nil)
+	tlsConn := Server(server, &ExtendedTLSConfig{TLSConfig: config})
 	if err := tlsConn.Handshake(); err != nil {
 		t.Errorf("Error from client handshake: %v", err)
 		return

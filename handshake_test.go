@@ -388,7 +388,7 @@ func testHandshake(t *testing.T, clientConfig, serverConfig *Config) (serverStat
 	c, s := localPipe(t)
 	errChan := make(chan error)
 	go func() {
-		cli := Client(c, clientConfig, nil)
+		cli := Client(c, &ExtendedTLSConfig{TLSConfig: clientConfig})
 		err := cli.Handshake()
 		if err != nil {
 			errChan <- fmt.Errorf("client: %v", err)
@@ -406,7 +406,7 @@ func testHandshake(t *testing.T, clientConfig, serverConfig *Config) (serverStat
 		}
 		errChan <- nil
 	}()
-	server := Server(s, serverConfig, nil)
+	server := Server(s, &ExtendedTLSConfig{TLSConfig: serverConfig})
 	err = server.Handshake()
 	if err == nil {
 		serverState = server.ConnectionState()

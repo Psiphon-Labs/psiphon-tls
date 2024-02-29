@@ -312,7 +312,7 @@ func (test *clientTest) run(t *testing.T, write bool) {
 		if config == nil {
 			config = testConfig
 		}
-		client := Client(clientConn, config, nil)
+		client := Client(clientConn, &ExtendedTLSConfig{TLSConfig: config})
 		defer client.Close()
 
 		if _, err := client.Write([]byte("hello\n")); err != nil {
@@ -1188,14 +1188,14 @@ func TestKeyLogTLS12(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		if err := Server(s, serverConfig, nil).Handshake(); err != nil {
+		if err := Server(s, &ExtendedTLSConfig{TLSConfig: serverConfig}).Handshake(); err != nil {
 			t.Errorf("server: %s", err)
 			return
 		}
 		s.Close()
 	}()
 
-	if err := Client(c, clientConfig, nil).Handshake(); err != nil {
+	if err := Client(c, &ExtendedTLSConfig{TLSConfig: clientConfig}).Handshake(); err != nil {
 		t.Fatalf("client: %s", err)
 	}
 
@@ -1239,14 +1239,14 @@ func TestKeyLogTLS13(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		if err := Server(s, serverConfig, nil).Handshake(); err != nil {
+		if err := Server(s, &ExtendedTLSConfig{TLSConfig: serverConfig}).Handshake(); err != nil {
 			t.Errorf("server: %s", err)
 			return
 		}
 		s.Close()
 	}()
 
-	if err := Client(c, clientConfig, nil).Handshake(); err != nil {
+	if err := Client(c, &ExtendedTLSConfig{TLSConfig: clientConfig}).Handshake(); err != nil {
 		t.Fatalf("client: %s", err)
 	}
 
@@ -1295,11 +1295,13 @@ func TestServerSelectingUnconfiguredApplicationProtocol(t *testing.T) {
 	errChan := make(chan error, 1)
 
 	go func() {
-		client := Client(c, &Config{
-			ServerName:   "foo",
-			CipherSuites: []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256},
-			NextProtos:   []string{"http", "something-else"},
-		}, nil)
+		client := Client(c, &ExtendedTLSConfig{
+			TLSConfig: &Config{
+				ServerName:   "foo",
+				CipherSuites: []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256},
+				NextProtos:   []string{"http", "something-else"},
+			},
+		})
 		errChan <- client.Handshake()
 	}()
 
@@ -1499,7 +1501,7 @@ func TestHostnameInSNI(t *testing.T) {
 		c, s := localPipe(t)
 
 		go func(host string) {
-			Client(c, &Config{ServerName: host, InsecureSkipVerify: true}, nil).Handshake()
+			Client(c, &ExtendedTLSConfig{TLSConfig: &Config{ServerName: host, InsecureSkipVerify: true}}).Handshake()
 		}(tt.in)
 
 		var header [5]byte
@@ -1538,10 +1540,12 @@ func TestServerSelectingUnconfiguredCipherSuite(t *testing.T) {
 	errChan := make(chan error, 1)
 
 	go func() {
-		client := Client(c, &Config{
-			ServerName:   "foo",
-			CipherSuites: []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256},
-		}, nil)
+		client := Client(c, &ExtendedTLSConfig{
+			TLSConfig: &Config{
+				ServerName:   "foo",
+				CipherSuites: []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256},
+			},
+		})
 		errChan <- client.Handshake()
 	}()
 
@@ -2072,7 +2076,7 @@ func testVerifyPeerCertificate(t *testing.T, version uint16) {
 			config.Certificates[0].OCSPStaple = []byte("dummy ocsp")
 			test.configureServer(config, &serverCalled)
 
-			err = Server(s, config, nil).Handshake()
+			err = Server(s, &ExtendedTLSConfig{TLSConfig: config}).Handshake()
 			s.Close()
 			done <- err
 		}()
@@ -2083,7 +2087,7 @@ func testVerifyPeerCertificate(t *testing.T, version uint16) {
 		config.Time = now
 		config.MaxVersion = version
 		test.configureClient(config, &clientCalled)
-		clientErr := Client(c, config, nil).Handshake()
+		clientErr := Client(c, &ExtendedTLSConfig{TLSConfig: config}).Handshake()
 		c.Close()
 		serverErr := <-done
 
@@ -2123,13 +2127,13 @@ func TestFailedWrite(t *testing.T) {
 		done := make(chan bool)
 
 		go func() {
-			Server(s, testConfig, nil).Handshake()
+			Server(s, &ExtendedTLSConfig{TLSConfig: testConfig}).Handshake()
 			s.Close()
 			done <- true
 		}()
 
 		brokenC := &brokenConn{Conn: c, breakAfter: breakAfter}
-		err := Client(brokenC, testConfig, nil).Handshake()
+		err := Client(brokenC, &ExtendedTLSConfig{TLSConfig: testConfig}).Handshake()
 		if err != brokenConnErr {
 			t.Errorf("#%d: expected error from brokenConn but got %q", breakAfter, err)
 		}
@@ -2167,12 +2171,12 @@ func testBuffering(t *testing.T, version uint16) {
 	go func() {
 		config := testConfig.Clone()
 		config.MaxVersion = version
-		Server(serverWCC, config, nil).Handshake()
+		Server(serverWCC, &ExtendedTLSConfig{TLSConfig: config}).Handshake()
 		serverWCC.Close()
 		done <- true
 	}()
 
-	err := Client(clientWCC, testConfig, nil).Handshake()
+	err := Client(clientWCC, &ExtendedTLSConfig{TLSConfig: testConfig}).Handshake()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2215,12 +2219,12 @@ func TestAlertFlushing(t *testing.T) {
 	}}
 
 	go func() {
-		Server(serverWCC, serverConfig, nil).Handshake()
+		Server(serverWCC, &ExtendedTLSConfig{TLSConfig: serverConfig}).Handshake()
 		serverWCC.Close()
 		done <- true
 	}()
 
-	err := Client(clientWCC, testConfig, nil).Handshake()
+	err := Client(clientWCC, &ExtendedTLSConfig{TLSConfig: testConfig}).Handshake()
 	if err == nil {
 		t.Fatal("client unexpectedly returned no error")
 	}
@@ -2249,7 +2253,7 @@ func TestHandshakeRace(t *testing.T) {
 		c, s := localPipe(t)
 
 		go func() {
-			server := Server(s, testConfig, nil)
+			server := Server(s, &ExtendedTLSConfig{TLSConfig: testConfig})
 			if err := server.Handshake(); err != nil {
 				panic(err)
 			}
@@ -2267,7 +2271,7 @@ func TestHandshakeRace(t *testing.T) {
 		startRead := make(chan struct{})
 		readDone := make(chan struct{}, 1)
 
-		client := Client(c, testConfig, nil)
+		client := Client(c, &ExtendedTLSConfig{TLSConfig: testConfig})
 		go func() {
 			<-startWrite
 			var request [1]byte
@@ -2411,7 +2415,7 @@ func testGetClientCertificate(t *testing.T, version uint16) {
 
 		go func() {
 			defer s.Close()
-			server := Server(s, serverConfig, nil)
+			server := Server(s, &ExtendedTLSConfig{TLSConfig: serverConfig})
 			err := server.Handshake()
 
 			var cs ConnectionState
@@ -2421,7 +2425,7 @@ func testGetClientCertificate(t *testing.T, version uint16) {
 			done <- serverResult{cs, err}
 		}()
 
-		clientErr := Client(c, clientConfig, nil).Handshake()
+		clientErr := Client(c, &ExtendedTLSConfig{TLSConfig: clientConfig}).Handshake()
 		c.Close()
 
 		result := <-done
@@ -2485,7 +2489,7 @@ RwBA9Xk1KBNF
 
 func TestCloseClientConnectionOnIdleServer(t *testing.T) {
 	clientConn, serverConn := localPipe(t)
-	client := Client(clientConn, testConfig.Clone(), nil)
+	client := Client(clientConn, &ExtendedTLSConfig{TLSConfig: testConfig.Clone()})
 	go func() {
 		var b [1]byte
 		serverConn.Read(b[:])
@@ -2640,7 +2644,7 @@ func TestClientHandshakeContextCancellation(t *testing.T) {
 		<-unblockServer
 		_ = s.Close()
 	}()
-	cli := Client(c, testConfig, nil)
+	cli := Client(c, &ExtendedTLSConfig{TLSConfig: testConfig})
 	// Initiates client side handshake, which will block until the client hello is read
 	// by the server, unless the cancellation works.
 	err := cli.HandshakeContext(ctx)
