@@ -599,6 +599,14 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 				},
 
 				func() {
+					if m.extendedMasterSecret {
+						// RFC 7672
+						b.AddUint16(extensionExtendedMasterSecret)
+						b.AddUint16(0) // empty extension_data
+					}
+				},
+
+				func() {
 					if len(m.alpnProtocols) > 0 {
 						// RFC 7301, Section 3.1
 						b.AddUint16(extensionALPN)
