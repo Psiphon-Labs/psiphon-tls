@@ -16,6 +16,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
 	"github.com/Psiphon-Labs/psiphon-tls/internal/mlkem768"
 )
@@ -900,6 +901,14 @@ func (c *Conn) sendSessionTicket(earlyData bool, extra [][]byte) error {
 		}
 	}
 	m.lifetime = uint32(maxSessionTicketLifetime / time.Second)
+
+	// [Psiphon]
+	// Set lifetime hint to a more typical value.
+	if obfuscateSessionTickets {
+		hints := []uint32{300, 1200, 7200, 10800, 64800, 100800, 129600}
+		index := prng.Intn(len(hints))
+		m.lifetime = hints[index]
+	}
 
 	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1
 	// The value is not stored anywhere; we never need to check the ticket age

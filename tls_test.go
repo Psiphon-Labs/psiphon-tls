@@ -883,7 +883,9 @@ func TestCloneNonFuncFields(t *testing.T) {
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
 		// [Psiphon]
-		case "ClientHelloPRNG", "GetClientHelloRandom":
+		case "ClientHelloPRNG", "GetClientHelloRandom", "UseObfuscatedSessionTickets",
+			"PassthroughAddress", "PassthroughVerifyMessage", "PassthroughHistoryAddNew",
+			"PassthroughLogInvalidMessage":
 			continue
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)

@@ -27,6 +27,12 @@ import (
 	"time"
 )
 
+func init() {
+	// [Psiphon]
+	// Disable obfuscation and randomization since its transforms won't match pre-recorded test data
+	obfuscateSessionTickets = false
+}
+
 func testClientHello(t *testing.T, serverConfig *Config, m handshakeMessage) {
 	testClientHelloFailure(t, serverConfig, m, "")
 }
