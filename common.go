@@ -785,6 +785,49 @@ type Config struct {
 	// shared secret key.
 	GetClientHelloRandom func() ([]byte, error)
 
+	// [Psiphon]
+	// UseObfuscatedSessionTickets should be set when using obfuscated session
+	// tickets. This setting ensures that checkForResumption operates in a way
+	// that is compatible with the obfuscated session ticket scheme.
+	//
+	// This flag doesn't fully configure obfuscated session tickets.
+	// SessionTicketKey and SetSessionTicketKeys must also be intialized. See the
+	// setup in psiphon/server.MeekServer.makeMeekTLSConfig.
+	//
+	// See the comment for NewObfuscatedClientSessionState for more details on
+	// obfuscated session tickets.
+	UseObfuscatedSessionTickets bool
+
+	// [Psiphon]
+	// PassthroughAddress, when not blank, enables passthrough mode. It is a
+	// network address, host and port, to which client traffic is relayed when
+	// the client fails anti-probing tests.
+	//
+	// The PassthroughAddress is expected to be a TCP endpoint. Passthrough is
+	// triggered when a ClientHello random field doesn't have a valid value, as
+	// determined by PassthroughKey.
+	PassthroughAddress string
+
+	// [Psiphon]
+	// PassthroughVerifyMessage must be set when passthrough mode is enabled. The
+	// function must return true for valid passthrough messages and false
+	// otherwise.
+	PassthroughVerifyMessage func([]byte) bool
+
+	// [Psiphon]
+	// PassthroughHistoryAddNew must be set when passthough mode is enabled. The
+	// function should check that a ClientHello random value has not been
+	// previously observed, returning true only for a newly observed value. Any
+	// logging is the callback's responsibility.
+	PassthroughHistoryAddNew func(
+		clientIP string,
+		clientRandom []byte) bool
+
+	// [Psiphon]
+	// PassthroughLogInvalidMessage must be set when passthough mode is enabled.
+	// The function should log an invalid ClientHello random value event.
+	PassthroughLogInvalidMessage func(clientIP string)
+
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
 	// sessionTicketKeys contains zero or more ticket keys. If set, it means
