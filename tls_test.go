@@ -885,7 +885,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 		// [Psiphon]
 		case "ClientHelloPRNG", "GetClientHelloRandom", "UseObfuscatedSessionTickets",
 			"PassthroughAddress", "PassthroughVerifyMessage", "PassthroughHistoryAddNew",
-			"PassthroughLogInvalidMessage":
+			"PassthroughLogInvalidMessage", "InsecureSkipTimeVerify":
 			continue
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)
