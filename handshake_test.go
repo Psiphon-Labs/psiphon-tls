@@ -411,10 +411,11 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 
-	if *bogoMode {
-		bogoShim()
-		os.Exit(0)
-	}
+	// [Psiphon] boring not supported
+	// if *bogoMode {
+	// 	bogoShim()
+	// 	os.Exit(0)
+	// }
 
 	os.Exit(runMain(m))
 }
