@@ -18,7 +18,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"internal/godebug"
+
+	// [Psiphon]
+	// "internal/godebug"
+
 	"io"
 	"net"
 	"slices"
@@ -1083,7 +1086,8 @@ var supportedVersions = []uint16{
 const roleClient = true
 const roleServer = false
 
-var tls10server = godebug.New("tls10server")
+// [Psiphon]
+// var tls10server = godebug.New("tls10server")
 
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	versions := make([]uint16, 0, len(supportedVersions))
@@ -1092,9 +1096,14 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 			continue
 		}
 		if (c == nil || c.MinVersion == 0) && v < VersionTLS12 {
-			if isClient || tls10server.Value() != "1" {
+			// [Psiphon] BEGIN
+			// if isClient || tls10server.Value() != "1" {
+			// 	continue
+			// }
+			if isClient {
 				continue
 			}
+			// [Psiphon] END
 		}
 		if isClient && c.EncryptedClientHelloConfigList != nil && v < VersionTLS13 {
 			continue

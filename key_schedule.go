@@ -7,11 +7,12 @@ package tls
 import (
 	"crypto/ecdh"
 	"crypto/hmac"
-	"crypto/internal/mlkem768"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/mlkem768"
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/hkdf"

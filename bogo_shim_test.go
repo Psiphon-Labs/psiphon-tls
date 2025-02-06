@@ -8,8 +8,6 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"internal/byteorder"
-	"internal/testenv"
 	"io"
 	"log"
 	"net"
@@ -20,6 +18,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
+	"github.com/Psiphon-Labs/psiphon-tls/testenv"
 )
 
 var (

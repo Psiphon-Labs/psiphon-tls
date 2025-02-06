@@ -5,7 +5,8 @@
 package tls
 
 import (
-	"internal/godebug"
+	// [Psiphon]
+	// "internal/godebug"
 	"slices"
 	_ "unsafe" // for linkname
 )
@@ -13,12 +14,14 @@ import (
 // Defaults are collected in this file to allow distributions to more easily patch
 // them to apply local policies.
 
-var tlskyber = godebug.New("tlskyber")
+// [Psiphon]
+// var tlskyber = godebug.New("tlskyber")
 
 func defaultCurvePreferences() []CurveID {
-	if tlskyber.Value() == "0" {
-		return []CurveID{X25519, CurveP256, CurveP384, CurveP521}
-	}
+	// [Psiphon]
+	// if tlskyber.Value() == "0" {
+	// 	return []CurveID{X25519, CurveP256, CurveP384, CurveP521}
+	// }
 	// For now, x25519Kyber768Draft00 must always be followed by X25519.
 	return []CurveID{x25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521}
 }
@@ -42,15 +45,19 @@ var defaultSupportedSignatureAlgorithms = []SignatureScheme{
 	ECDSAWithSHA1,
 }
 
-var tlsrsakex = godebug.New("tlsrsakex")
-var tls3des = godebug.New("tls3des")
+// [Psiphon]
+// var tlsrsakex = godebug.New("tlsrsakex")
+// var tls3des = godebug.New("tls3des")
 
 func defaultCipherSuites() []uint16 {
 	suites := slices.Clone(cipherSuitesPreferenceOrder)
 	return slices.DeleteFunc(suites, func(c uint16) bool {
-		return disabledCipherSuites[c] ||
-			tlsrsakex.Value() != "1" && rsaKexCiphers[c] ||
-			tls3des.Value() != "1" && tdesCiphers[c]
+		// [Psiphon] BEGIN
+		// return disabledCipherSuites[c] ||
+		// 	tlsrsakex.Value() != "1" && rsaKexCiphers[c] ||
+		// 	tls3des.Value() != "1" && tdesCiphers[c]
+		return disabledCipherSuites[c] || rsaKexCiphers[c] || tdesCiphers[c]
+		// [Psiphon] END
 	})
 }
 

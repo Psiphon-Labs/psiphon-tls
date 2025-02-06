@@ -31,7 +31,8 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
-	"internal/byteorder"
+
+	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
 
 	"golang.org/x/crypto/sha3"
 )

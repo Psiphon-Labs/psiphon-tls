@@ -9,13 +9,14 @@ import (
 	"context"
 	"crypto"
 	"crypto/hmac"
-	"crypto/internal/mlkem768"
 	"crypto/rsa"
 	"crypto/subtle"
 	"errors"
 	"hash"
 	"slices"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/mlkem768"
 )
 
 type clientHandshakeStateTLS13 struct {

@@ -18,7 +18,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"internal/testenv"
 	"io"
 	"math"
 	"math/big"
@@ -29,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tls/testenv"
 )
 
 var rsaCertPEM = `-----BEGIN CERTIFICATE-----
@@ -1895,13 +1896,14 @@ func TestHandshakeKyber(t *testing.T) {
 			expectClientSupport: true,
 			expectKyber:         false,
 		},
-		{
-			name: "GODEBUG",
-			preparation: func(t *testing.T) {
-				t.Setenv("GODEBUG", "tlskyber=0")
-			},
-			expectClientSupport: false,
-		},
+		// [Psiphon] godebug not supported
+		// {
+		// 	name: "GODEBUG",
+		// 	preparation: func(t *testing.T) {
+		// 		t.Setenv("GODEBUG", "tlskyber=0")
+		// 	},
+		// 	expectClientSupport: false,
+		// },
 	}
 
 	baseConfig := testConfig.Clone()
@@ -1987,26 +1989,28 @@ func TestX509KeyPairPopulateCertificate(t *testing.T) {
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
-	t.Run("x509keypairleaf=0", func(t *testing.T) {
-		t.Setenv("GODEBUG", "x509keypairleaf=0")
-		cert, err := X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cert.Leaf != nil {
-			t.Fatal("Leaf should not be populated")
-		}
-	})
-	t.Run("x509keypairleaf=1", func(t *testing.T) {
-		t.Setenv("GODEBUG", "x509keypairleaf=1")
-		cert, err := X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cert.Leaf == nil {
-			t.Fatal("Leaf should be populated")
-		}
-	})
+	// [Psiphon] godebug not supported
+	// t.Run("x509keypairleaf=0", func(t *testing.T) {
+	// 	t.Setenv("GODEBUG", "x509keypairleaf=0")
+	// 	cert, err := X509KeyPair(certPEM, keyPEM)
+	// 	if err != nil {
+	// 		t.Fatal(err)
+	// 	}
+	// 	if cert.Leaf != nil {
+	// 		t.Fatal("Leaf should not be populated")
+	// 	}
+	// })
+	// [Psiphon] godebug not supported
+	// t.Run("x509keypairleaf=1", func(t *testing.T) {
+	// 	t.Setenv("GODEBUG", "x509keypairleaf=1")
+	// 	cert, err := X509KeyPair(certPEM, keyPEM)
+	// 	if err != nil {
+	// 		t.Fatal(err)
+	// 	}
+	// 	if cert.Leaf == nil {
+	// 		t.Fatal("Leaf should be populated")
+	// 	}
+	// })
 	t.Run("GODEBUG unset", func(t *testing.T) {
 		cert, err := X509KeyPair(certPEM, keyPEM)
 		if err != nil {

@@ -5,9 +5,10 @@
 package tls
 
 import (
-	"crypto/internal/hpke"
 	"errors"
 	"strings"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/hpke"
 
 	"golang.org/x/crypto/cryptobyte"
 )

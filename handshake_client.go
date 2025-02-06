@@ -10,21 +10,25 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/internal/hpke"
-	"crypto/internal/mlkem768"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"hash"
-	"internal/byteorder"
-	"internal/godebug"
+
+	// [Psiphon]
+	// "internal/godebug"
+
 	"io"
 	"net"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/hpke"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/mlkem768"
+
+	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
 )
 
 type clientHandshakeState struct {
@@ -626,14 +630,16 @@ func (hs *clientHandshakeState) pickCipherSuite() error {
 		return errors.New("tls: server chose an unconfigured cipher suite")
 	}
 
-	if hs.c.config.CipherSuites == nil && !needFIPS() && rsaKexCiphers[hs.suite.id] {
-		tlsrsakex.Value() // ensure godebug is initialized
-		tlsrsakex.IncNonDefault()
-	}
-	if hs.c.config.CipherSuites == nil && !needFIPS() && tdesCiphers[hs.suite.id] {
-		tls3des.Value() // ensure godebug is initialized
-		tls3des.IncNonDefault()
-	}
+	// [Psiphon] BEGIN
+	// if hs.c.config.CipherSuites == nil && !needFIPS() && rsaKexCiphers[hs.suite.id] {
+	// 	tlsrsakex.Value() // ensure godebug is initialized
+	// 	tlsrsakex.IncNonDefault()
+	// }
+	// if hs.c.config.CipherSuites == nil && !needFIPS() && tdesCiphers[hs.suite.id] {
+	// 	tls3des.Value() // ensure godebug is initialized
+	// 	tls3des.IncNonDefault()
+	// }
+	// [Psiphon] END
 
 	hs.c.cipherSuite = hs.suite.id
 	return nil
@@ -1052,17 +1058,19 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 // to verify the signatures of during a TLS handshake.
 const defaultMaxRSAKeySize = 8192
 
-var tlsmaxrsasize = godebug.New("tlsmaxrsasize")
+// [Psiphon]
+// var tlsmaxrsasize = godebug.New("tlsmaxrsasize")
 
 func checkKeySize(n int) (max int, ok bool) {
-	if v := tlsmaxrsasize.Value(); v != "" {
-		if max, err := strconv.Atoi(v); err == nil {
-			if (n <= max) != (n <= defaultMaxRSAKeySize) {
-				tlsmaxrsasize.IncNonDefault()
-			}
-			return max, n <= max
-		}
-	}
+	// [Psiphon]
+	// if v := tlsmaxrsasize.Value(); v != "" {
+	// 	if max, err := strconv.Atoi(v); err == nil {
+	// 		if (n <= max) != (n <= defaultMaxRSAKeySize) {
+	// 			tlsmaxrsasize.IncNonDefault()
+	// 		}
+	// 		return max, n <= max
+	// 	}
+	// }
 	return defaultMaxRSAKeySize, n <= defaultMaxRSAKeySize
 }
 
