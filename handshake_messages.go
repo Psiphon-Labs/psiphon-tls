@@ -444,18 +444,34 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 	}
 	compressionMethods = compressionMethods[:cut]
 
+	// supported_groups (elliptic_curves)
+	// The supportedCurves field is shuffled and truncated up to `cut`,
+	// which is randomly drawn from a geometric distribution, determining
+	// the number of elements retained. However, all keyShare groups
+	// are always retained.
 	supportedCurves := make([]CurveID, len(m.supportedCurves))
 	perm = m.PRNG.Perm(len(m.supportedCurves))
 	for i, j := range perm {
 		supportedCurves[j] = m.supportedCurves[i]
 	}
 	cut = len(supportedCurves)
-	for ; cut > 1; cut-- {
+	for ; cut > len(m.keyShares); cut-- {
 		if !m.PRNG.FlipCoin() {
 			break
 		}
 	}
-	supportedCurves = supportedCurves[:cut]
+	maxNumToDelete := len(supportedCurves) - cut
+	numDeleted := 0
+	supportedCurves = slices.DeleteFunc(supportedCurves, func(curve CurveID) bool {
+		// Delete curves that are not in keyShares up to maxNumToDelete.
+		if numDeleted < maxNumToDelete && !slices.ContainsFunc(m.keyShares, func(ks keyShare) bool {
+			return ks.group == curve
+		}) {
+			numDeleted++
+			return true
+		}
+		return false
+	})
 
 	supportedPoints := make([]uint8, len(m.supportedPoints))
 	perm = m.PRNG.Perm(len(m.supportedPoints))
