@@ -27,6 +27,7 @@ import (
 
 	"github.com/Psiphon-Labs/psiphon-tls/internal/hpke"
 	"github.com/Psiphon-Labs/psiphon-tls/internal/mlkem768"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 
 	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
 )
@@ -86,7 +87,17 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCon
 
 	// [Psiphon]
 	if c.config != nil {
-		hello.PRNG = c.config.ClientHelloPRNG
+
+		if c.config.ClientHelloPRNG != nil {
+			// Generate a ClientHello PRNG seed for reproducibility
+			// of the ClientHello.
+			hello.marshalerPRNGSeed = new(prng.Seed)
+			_, err := c.config.ClientHelloPRNG.Read(hello.marshalerPRNGSeed[:])
+			if err != nil {
+				return nil, nil, nil, errors.New("tls: short read from ClientHelloPRNG: " + err.Error())
+			}
+		}
+
 		if c.config.GetClientHelloRandom != nil {
 			helloRandom, err := c.config.GetClientHelloRandom()
 			if err == nil && len(helloRandom) != 32 {

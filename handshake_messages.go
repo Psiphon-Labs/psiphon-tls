@@ -99,8 +99,8 @@ type clientHelloMsg struct {
 	quicTransportParameters          []byte
 	encryptedClientHello             []byte
 
-	// [Psiphon]
-	PRNG *prng.PRNG
+	// [Psiphon] Seed is used to randomize the marshalled Client Hello.
+	marshalerPRNGSeed *prng.Seed
 }
 
 func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
@@ -378,8 +378,8 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 
 	// [Psiphon]
 	// Randomize the Client Hello.
-	if m.PRNG != nil {
-		return m.marshalRandomized(), nil
+	if m.marshalerPRNGSeed != nil {
+		return m.marshalRandomizedNoECH()
 	}
 
 	return m.marshalMsg(false)
@@ -387,27 +387,29 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 
 // [Psiphon]
 //
-// marshalRandomized is a randomized variant of marshal. The original Marshal
+// marshalRandomizedNoECH is a randomized variant of `marshalMsg(false)`. The original Marshal
 // is retained as-is to ease future merging.
+//
+// marshalRandomizedNoECH is idempotent given the same `clientHelloMsg.Seed`.
 //
 // The offered cipher suites and algorithms are shuffled and truncated. Longer
 // lists are selected with higher probability. Extensions are shuffled.
 //
 // The quic_transport_parameters extension is marshaled in quic-go and is
 // randomized in TransportParameters.Marshal.
-func (m *clientHelloMsg) marshalRandomized() []byte {
-	// Some inputs, such as m.supportedCurves, point to global variables. Copy
-	// all slices before truncating.
+func (m *clientHelloMsg) marshalRandomizedNoECH() ([]byte, error) {
+
+	PRNG := prng.NewPRNGWithSeed(m.marshalerPRNGSeed)
 
 	cipherSuites := make([]uint16, len(m.cipherSuites))
 	for {
-		perm := m.PRNG.Perm(len(m.cipherSuites))
+		perm := PRNG.Perm(len(m.cipherSuites))
 		for i, j := range perm {
 			cipherSuites[j] = m.cipherSuites[i]
 		}
 		cut := len(cipherSuites)
 		for ; cut > 1; cut-- {
-			if !m.PRNG.FlipCoin() {
+			if !PRNG.FlipCoin() {
 				break
 			}
 		}
@@ -432,13 +434,13 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 	}
 
 	compressionMethods := make([]uint8, len(m.compressionMethods))
-	perm := m.PRNG.Perm(len(m.compressionMethods))
+	perm := PRNG.Perm(len(m.compressionMethods))
 	for i, j := range perm {
 		compressionMethods[j] = m.compressionMethods[i]
 	}
 	cut := len(compressionMethods)
 	for ; cut > 1; cut-- {
-		if !m.PRNG.FlipCoin() {
+		if !PRNG.FlipCoin() {
 			break
 		}
 	}
@@ -450,13 +452,13 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 	// the number of elements retained. However, all keyShare groups
 	// are always retained.
 	supportedCurves := make([]CurveID, len(m.supportedCurves))
-	perm = m.PRNG.Perm(len(m.supportedCurves))
+	perm = PRNG.Perm(len(m.supportedCurves))
 	for i, j := range perm {
 		supportedCurves[j] = m.supportedCurves[i]
 	}
 	cut = len(supportedCurves)
 	for ; cut > len(m.keyShares); cut-- {
-		if !m.PRNG.FlipCoin() {
+		if !PRNG.FlipCoin() {
 			break
 		}
 	}
@@ -474,13 +476,13 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 	})
 
 	supportedPoints := make([]uint8, len(m.supportedPoints))
-	perm = m.PRNG.Perm(len(m.supportedPoints))
+	perm = PRNG.Perm(len(m.supportedPoints))
 	for i, j := range perm {
 		supportedPoints[j] = m.supportedPoints[i]
 	}
 	cut = len(supportedPoints)
 	for ; cut > 1; cut-- {
-		if !m.PRNG.FlipCoin() {
+		if !PRNG.FlipCoin() {
 			break
 		}
 	}
@@ -721,7 +723,7 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 			}
 
 			// randomize all extensions except pre_shared_key
-			perm = m.PRNG.Perm(len(extensionMarshallers))
+			perm = PRNG.Perm(len(extensionMarshallers))
 			for _, j := range perm {
 				extensionMarshallers[j]()
 			}
@@ -756,7 +758,7 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 		}
 	})
 
-	return b.BytesOrPanic()
+	return b.BytesOrPanic(), nil
 }
 
 // marshalWithoutBinders returns the ClientHello through the
