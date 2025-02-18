@@ -511,6 +511,74 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 				},
 
 				func() {
+					if len(supportedPoints) > 0 {
+						// RFC 4492, Section 5.1.2
+						b.AddUint16(extensionSupportedPoints)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+								b.AddBytes(supportedPoints)
+							})
+						})
+					}
+				},
+
+				func() {
+					if m.ticketSupported {
+						// RFC 5077, Section 3.2
+						b.AddUint16(extensionSessionTicket)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddBytes(m.sessionTicket)
+						})
+					}
+				},
+
+				func() {
+					if m.secureRenegotiationSupported {
+						// RFC 5746, Section 3.2
+						b.AddUint16(extensionRenegotiationInfo)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+								b.AddBytes(m.secureRenegotiation)
+							})
+						})
+					}
+				},
+
+				func() {
+					if m.extendedMasterSecret {
+						// RFC 7672
+						b.AddUint16(extensionExtendedMasterSecret)
+						b.AddUint16(0) // empty extension_data
+					}
+				},
+
+				func() {
+					if m.scts {
+						// RFC 6962, Section 3.3.1
+						b.AddUint16(extensionSCT)
+						b.AddUint16(0) // empty extension_data
+					}
+				},
+
+				func() {
+					if m.earlyData {
+						// RFC 8446, Section 4.2.10
+						b.AddUint16(extensionEarlyData)
+						b.AddUint16(0) // empty extension_data
+					}
+				},
+
+				func() {
+					if m.quicTransportParameters != nil { // marshal zero-length parameters when present
+						// RFC 9001, Section 8.2
+						b.AddUint16(extensionQUICTransportParameters)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddBytes(m.quicTransportParameters)
+						})
+					}
+				},
+
+				func() {
 					if m.ocspStapling {
 						// RFC 4366, Section 3.6
 						b.AddUint16(extensionStatusRequest)
@@ -532,28 +600,6 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 									b.AddUint16(uint16(curve))
 								}
 							})
-						})
-					}
-				},
-
-				func() {
-					if len(supportedPoints) > 0 {
-						// RFC 4492, Section 5.1.2
-						b.AddUint16(extensionSupportedPoints)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(supportedPoints)
-							})
-						})
-					}
-				},
-
-				func() {
-					if m.ticketSupported {
-						// RFC 5077, Section 3.2
-						b.AddUint16(extensionSessionTicket)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddBytes(m.sessionTicket)
 						})
 					}
 				},
@@ -587,26 +633,6 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 				},
 
 				func() {
-					if m.secureRenegotiationSupported {
-						// RFC 5746, Section 3.2
-						b.AddUint16(extensionRenegotiationInfo)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(m.secureRenegotiation)
-							})
-						})
-					}
-				},
-
-				func() {
-					if m.extendedMasterSecret {
-						// RFC 7672
-						b.AddUint16(extensionExtendedMasterSecret)
-						b.AddUint16(0) // empty extension_data
-					}
-				},
-
-				func() {
 					if len(m.alpnProtocols) > 0 {
 						// RFC 7301, Section 3.1
 						b.AddUint16(extensionALPN)
@@ -619,14 +645,6 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 								}
 							})
 						})
-					}
-				},
-
-				func() {
-					if m.scts {
-						// RFC 6962, Section 3.3.1
-						b.AddUint16(extensionSCT)
-						b.AddUint16(0) // empty extension_data
 					}
 				},
 
@@ -674,14 +692,6 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 				},
 
 				func() {
-					if m.earlyData {
-						// RFC 8446, Section 4.2.10
-						b.AddUint16(extensionEarlyData)
-						b.AddUint16(0) // empty extension_data
-					}
-				},
-
-				func() {
 					if len(m.pskModes) > 0 {
 						// RFC 8446, Section 4.2.9
 						b.AddUint16(extensionPSKModes)
@@ -692,18 +702,9 @@ func (m *clientHelloMsg) marshalRandomized() []byte {
 						})
 					}
 				},
-
-				func() {
-					if m.quicTransportParameters != nil { // marshal zero-length parameters when present
-						// RFC 9001, Section 8.2
-						b.AddUint16(extensionQUICTransportParameters)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddBytes(m.quicTransportParameters)
-						})
-					}
-				},
 			}
 
+			// randomize all extensions except pre_shared_key
 			perm = m.PRNG.Perm(len(extensionMarshallers))
 			for _, j := range perm {
 				extensionMarshallers[j]()
