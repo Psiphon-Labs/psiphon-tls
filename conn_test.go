@@ -7,8 +7,12 @@ package tls
 import (
 	"bytes"
 	"io"
+	"math/rand"
 	"net"
+	"reflect"
 	"testing"
+	"testing/quick"
+	"time"
 )
 
 func TestRoundUp(t *testing.T) {
@@ -315,5 +319,33 @@ func TestRecordBadVersionTLS13(t *testing.T) {
 	_, err := tlsConn.Read(make([]byte, 10))
 	if err.Error() != expectedErr {
 		t.Fatalf("unexpected error: got %q, want %q", err, expectedErr)
+	}
+}
+
+// [Psiphon]
+func TestReadClientHelloRandom(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		rand := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+		typ := reflect.ValueOf(&clientHelloMsg{}).Type()
+		value, ok := quick.Value(typ, rand)
+		if !ok {
+			t.Error("failed to generate value")
+		}
+
+		chm := value.Interface().(*clientHelloMsg)
+		data, err := chm.marshal()
+		if err != nil {
+			t.Error(err)
+		}
+
+		random, err := ReadClientHelloRandom(data)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if !bytes.Equal(random, chm.random) {
+			t.Errorf("random bytes do not match: got %x, want %x", random, chm.random)
+		}
 	}
 }
