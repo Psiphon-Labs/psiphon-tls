@@ -15,11 +15,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
 	"io"
 	"net"
 	"runtime"
@@ -28,6 +26,11 @@ import (
 	"sync"
 	"time"
 	_ "unsafe" // for linkname
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
+
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 )
 
 const (
@@ -243,6 +246,14 @@ const (
 // testingOnlyForceDowngradeCanary is set in tests to force the server side to
 // include downgrade canaries even if it's using its highers supported version.
 var testingOnlyForceDowngradeCanary bool
+
+// [Psiphon] ConnectionMetrics represents metrics of interest about the connection
+// that are not available from ConnectionState.
+type ConnectionMetrics struct {
+	// ClientSentTicket is true if the client has sent a TLS 1.2 session ticket
+	// or a TLS 1.3 PSK in the ClientHello successfully.
+	ClientSentTicket bool
+}
 
 // ConnectionState records basic TLS details about the connection.
 type ConnectionState struct {
@@ -712,6 +723,12 @@ type Config struct {
 	// testing or in combination with VerifyConnection or VerifyPeerCertificate.
 	InsecureSkipVerify bool
 
+	// [Psiphon] InsecureSkipTimeVerify controls whether a client verifies the
+	// server's certificate chain against time when loading a session.
+	// If InsecureSkipTimeVerify is true crypto/tls accepts the certificate
+	// even when it is expired.
+	InsecureSkipTimeVerify bool
+
 	// CipherSuites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
 	// the list is ignored. Note that TLS 1.3 ciphersuites are not configurable.
 	//
@@ -900,6 +917,54 @@ type Config struct {
 	// clients, see the EncryptedClientHelloConfigList field.
 	EncryptedClientHelloKeys []EncryptedClientHelloKey
 
+	// [Psiphon] ClientHelloPRNG is used for Client Hello randomization and replay.
+	ClientHelloPRNG *prng.PRNG
+
+	// [Psiphon] GetClientHelloRandom is used to supply a specific value in
+	// the TLS Client Hello random field. This is used to send an anti-probing
+	// message, indistinguishable from random, that proves knowledge of a
+	// shared secret key.
+	GetClientHelloRandom func() ([]byte, error)
+
+	// [Psiphon] UseObfuscatedSessionTickets should be set when using obfuscated session
+	// tickets. This setting ensures that checkForResumption operates in a way
+	// that is compatible with the obfuscated session ticket scheme.
+	//
+	// This flag doesn't fully configure obfuscated session tickets.
+	// SessionTicketKey and SetSessionTicketKeys must also be intialized. See the
+	// setup in psiphon/server.MeekServer.makeMeekTLSConfig.
+	//
+	// See the comment for NewObfuscatedClientSessionState for more details on
+	// obfuscated session tickets.
+	UseObfuscatedSessionTickets bool
+
+	// [Psiphon] PassthroughAddress, when not blank, enables passthrough mode.
+	// It is a network address, host and port, to which client traffic is
+	// relayed when the client fails anti-probing tests.
+	//
+	// The PassthroughAddress is expected to be a TCP endpoint. Passthrough is
+	// triggered when a ClientHello random field doesn't have a valid value, as
+	// determined by PassthroughKey.
+	PassthroughAddress string
+
+	// [Psiphon] PassthroughVerifyMessage must be set when passthrough mode is
+	// enabled. The function must return true for valid passthrough messages
+	// and false otherwise.
+	PassthroughVerifyMessage func([]byte) bool
+
+	// [Psiphon] PassthroughHistoryAddNew must be set when passthrough mode is
+	// enabled. The function checks that a ClientHello random value has not been
+	// previously observed, returning true only for a newly observed value. Any
+	// logging is the callback's responsibility.
+	PassthroughHistoryAddNew func(
+		clientIP string,
+		clientRandom []byte) bool
+
+	// [Psiphon] PassthroughLogInvalidMessage must be set when passthrough mode
+	// is enabled. The function should log an invalid ClientHello random value
+	// event.
+	PassthroughLogInvalidMessage func(clientIP string)
+
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
 	// sessionTicketKeys contains zero or more ticket keys. If set, it means
@@ -1034,6 +1099,9 @@ func (c *Config) Clone() *Config {
 		EncryptedClientHelloKeys:            c.EncryptedClientHelloKeys,
 		sessionTicketKeys:                   c.sessionTicketKeys,
 		autoSessionTicketKeys:               c.autoSessionTicketKeys,
+
+		// [Psiphon]
+		InsecureSkipTimeVerify: c.InsecureSkipTimeVerify,
 	}
 }
 
