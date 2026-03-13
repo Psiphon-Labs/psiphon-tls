@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -98,9 +97,8 @@ type clientHelloMsg struct {
 	pskBinders                       [][]byte
 	quicTransportParameters          []byte
 	encryptedClientHello             []byte
-
-	// [Psiphon] Seed is used to randomize the marshalled Client Hello.
-	marshalerPRNGSeed *prng.Seed
+	// extensions are only populated on the server-side of a handshake
+	extensions []uint16
 }
 
 func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
@@ -375,390 +373,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 }
 
 func (m *clientHelloMsg) marshal() ([]byte, error) {
-
-	// [Psiphon]
-	// Randomize the Client Hello.
-	if m.marshalerPRNGSeed != nil {
-		return m.marshalRandomizedNoECH()
-	}
-
 	return m.marshalMsg(false)
-}
-
-// [Psiphon]
-//
-// marshalRandomizedNoECH is a randomized variant of `marshalMsg(false)`. The original Marshal
-// is retained as-is to ease future merging.
-//
-// marshalRandomizedNoECH is idempotent given the same `clientHelloMsg.Seed`.
-//
-// The offered cipher suites and algorithms are shuffled and truncated. Longer
-// lists are selected with higher probability. Extensions are shuffled.
-//
-// The quic_transport_parameters extension is marshaled in quic-go and is
-// randomized in TransportParameters.Marshal.
-func (m *clientHelloMsg) marshalRandomizedNoECH() ([]byte, error) {
-
-	PRNG := prng.NewPRNGWithSeed(m.marshalerPRNGSeed)
-
-	cipherSuites := make([]uint16, len(m.cipherSuites))
-	for {
-		perm := PRNG.Perm(len(m.cipherSuites))
-		for i, j := range perm {
-			cipherSuites[j] = m.cipherSuites[i]
-		}
-		cut := len(cipherSuites)
-		for ; cut > 1; cut-- {
-			if !PRNG.FlipCoin() {
-				break
-			}
-		}
-
-		// Must contain at least one of defaultCipherSuitesTLS13.
-		containsDefault := false
-		for _, suite := range cipherSuites[:cut] {
-			for _, defaultSuite := range defaultCipherSuitesTLS13 {
-				if suite == defaultSuite {
-					containsDefault = true
-					break
-				}
-			}
-			if containsDefault {
-				break
-			}
-		}
-		if containsDefault {
-			cipherSuites = cipherSuites[:cut]
-			break
-		}
-	}
-
-	compressionMethods := make([]uint8, len(m.compressionMethods))
-	perm := PRNG.Perm(len(m.compressionMethods))
-	for i, j := range perm {
-		compressionMethods[j] = m.compressionMethods[i]
-	}
-	cut := len(compressionMethods)
-	for ; cut > 1; cut-- {
-		if !PRNG.FlipCoin() {
-			break
-		}
-	}
-	compressionMethods = compressionMethods[:cut]
-
-	// supported_groups (elliptic_curves)
-	// The supportedCurves field is shuffled and truncated up to `cut`,
-	// which is randomly drawn from a geometric distribution, determining
-	// the number of elements retained. However, all keyShare groups
-	// are always retained.
-	supportedCurves := make([]CurveID, len(m.supportedCurves))
-	perm = PRNG.Perm(len(m.supportedCurves))
-	for i, j := range perm {
-		supportedCurves[j] = m.supportedCurves[i]
-	}
-	cut = len(supportedCurves)
-	for ; cut > len(m.keyShares); cut-- {
-		if !PRNG.FlipCoin() {
-			break
-		}
-	}
-	maxNumToDelete := len(supportedCurves) - cut
-	numDeleted := 0
-	supportedCurves = slices.DeleteFunc(supportedCurves, func(curve CurveID) bool {
-		// Delete curves that are not in keyShares up to maxNumToDelete.
-		if numDeleted < maxNumToDelete && !slices.ContainsFunc(m.keyShares, func(ks keyShare) bool {
-			return ks.group == curve
-		}) {
-			numDeleted++
-			return true
-		}
-		return false
-	})
-
-	supportedPoints := make([]uint8, len(m.supportedPoints))
-	perm = PRNG.Perm(len(m.supportedPoints))
-	for i, j := range perm {
-		supportedPoints[j] = m.supportedPoints[i]
-	}
-	cut = len(supportedPoints)
-	for ; cut > 1; cut-- {
-		if !PRNG.FlipCoin() {
-			break
-		}
-	}
-	supportedPoints = supportedPoints[:cut]
-
-	var b cryptobyte.Builder
-	b.AddUint8(typeClientHello)
-	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddUint16(m.vers)
-		addBytesWithLength(b, m.random, 32)
-		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes(m.sessionId)
-		})
-		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-			for _, suite := range cipherSuites {
-				b.AddUint16(suite)
-			}
-		})
-		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes(compressionMethods)
-		})
-
-		// If extensions aren't present, omit them.
-		var extensionsPresent bool
-		bWithoutExtensions := *b
-
-		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-
-			extensionMarshallers := []func(){
-
-				func() {
-					if len(m.serverName) > 0 {
-						// RFC 6066, Section 3
-						b.AddUint16(extensionServerName)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddUint8(0) // name_type = host_name
-								b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-									b.AddBytes([]byte(m.serverName))
-								})
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(supportedPoints) > 0 {
-						// RFC 4492, Section 5.1.2
-						b.AddUint16(extensionSupportedPoints)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(supportedPoints)
-							})
-						})
-					}
-				},
-
-				func() {
-					if m.ticketSupported {
-						// RFC 5077, Section 3.2
-						b.AddUint16(extensionSessionTicket)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddBytes(m.sessionTicket)
-						})
-					}
-				},
-
-				func() {
-					if m.secureRenegotiationSupported {
-						// RFC 5746, Section 3.2
-						b.AddUint16(extensionRenegotiationInfo)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(m.secureRenegotiation)
-							})
-						})
-					}
-				},
-
-				func() {
-					if m.extendedMasterSecret {
-						// RFC 7672
-						b.AddUint16(extensionExtendedMasterSecret)
-						b.AddUint16(0) // empty extension_data
-					}
-				},
-
-				func() {
-					if m.scts {
-						// RFC 6962, Section 3.3.1
-						b.AddUint16(extensionSCT)
-						b.AddUint16(0) // empty extension_data
-					}
-				},
-
-				func() {
-					if m.earlyData {
-						// RFC 8446, Section 4.2.10
-						b.AddUint16(extensionEarlyData)
-						b.AddUint16(0) // empty extension_data
-					}
-				},
-
-				func() {
-					if m.quicTransportParameters != nil { // marshal zero-length parameters when present
-						// RFC 9001, Section 8.2
-						b.AddUint16(extensionQUICTransportParameters)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddBytes(m.quicTransportParameters)
-						})
-					}
-				},
-
-				func() {
-					if m.ocspStapling {
-						// RFC 4366, Section 3.6
-						b.AddUint16(extensionStatusRequest)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8(1)  // status_type = ocsp
-							b.AddUint16(0) // empty responder_id_list
-							b.AddUint16(0) // empty request_extensions
-						})
-					}
-				},
-
-				func() {
-					if len(supportedCurves) > 0 {
-						// RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
-						b.AddUint16(extensionSupportedCurves)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, curve := range supportedCurves {
-									b.AddUint16(uint16(curve))
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.supportedSignatureAlgorithms) > 0 {
-						// RFC 5246, Section 7.4.1.4.1
-						b.AddUint16(extensionSignatureAlgorithms)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, sigAlgo := range m.supportedSignatureAlgorithms {
-									b.AddUint16(uint16(sigAlgo))
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.supportedSignatureAlgorithmsCert) > 0 {
-						// RFC 8446, Section 4.2.3
-						b.AddUint16(extensionSignatureAlgorithmsCert)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, sigAlgo := range m.supportedSignatureAlgorithmsCert {
-									b.AddUint16(uint16(sigAlgo))
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.alpnProtocols) > 0 {
-						// RFC 7301, Section 3.1
-						b.AddUint16(extensionALPN)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, proto := range m.alpnProtocols {
-									b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-										b.AddBytes([]byte(proto))
-									})
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.supportedVersions) > 0 {
-						// RFC 8446, Section 4.2.1
-						b.AddUint16(extensionSupportedVersions)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, vers := range m.supportedVersions {
-									b.AddUint16(vers)
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.cookie) > 0 {
-						// RFC 8446, Section 4.2.2
-						b.AddUint16(extensionCookie)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(m.cookie)
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.keyShares) > 0 {
-						// RFC 8446, Section 4.2.8
-						b.AddUint16(extensionKeyShare)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								for _, ks := range m.keyShares {
-									b.AddUint16(uint16(ks.group))
-									b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-										b.AddBytes(ks.data)
-									})
-								}
-							})
-						})
-					}
-				},
-
-				func() {
-					if len(m.pskModes) > 0 {
-						// RFC 8446, Section 4.2.9
-						b.AddUint16(extensionPSKModes)
-						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(m.pskModes)
-							})
-						})
-					}
-				},
-			}
-
-			// randomize all extensions except pre_shared_key
-			perm = PRNG.Perm(len(extensionMarshallers))
-			for _, j := range perm {
-				extensionMarshallers[j]()
-			}
-
-			if len(m.pskIdentities) > 0 { // pre_shared_key must be the last extension
-				// RFC 8446, Section 4.2.11
-				b.AddUint16(extensionPreSharedKey)
-				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-						for _, psk := range m.pskIdentities {
-							b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(psk.label)
-							})
-							b.AddUint32(psk.obfuscatedTicketAge)
-						}
-					})
-					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-						for _, binder := range m.pskBinders {
-							b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-								b.AddBytes(binder)
-							})
-						}
-					})
-				})
-			}
-
-			extensionsPresent = len(b.BytesOrPanic()) > 2
-		})
-
-		if !extensionsPresent {
-			*b = bWithoutExtensions
-		}
-	})
-
-	return b.BytesOrPanic(), nil
 }
 
 // marshalWithoutBinders returns the ClientHello through the
@@ -854,6 +469,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			return false
 		}
 		seenExts[extension] = true
+		m.extensions = append(m.extensions, extension)
 
 		switch extension {
 		case extensionServerName:
@@ -1045,6 +661,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 					return false
 				}
 				m.pskBinders = append(m.pskBinders, binder)
+			}
+		case extensionEncryptedClientHello:
+			if !extData.ReadBytes(&m.encryptedClientHello, len(extData)) {
+				return false
 			}
 		default:
 			// Ignore unknown extensions.
@@ -1385,6 +1005,7 @@ type encryptedExtensionsMsg struct {
 	quicTransportParameters []byte
 	earlyData               bool
 	echRetryConfigs         []byte
+	serverNameAck           bool
 }
 
 func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
@@ -1420,6 +1041,10 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 					b.AddBytes(m.echRetryConfigs)
 				})
 			}
+			if m.serverNameAck {
+				b.AddUint16(extensionServerName)
+				b.AddUint16(0) // empty extension_data
+			}
 		})
 	})
 
@@ -1436,6 +1061,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
+	seenExts := make(map[uint16]bool)
 	for !extensions.Empty() {
 		var extension uint16
 		var extData cryptobyte.String
@@ -1443,6 +1069,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			!extensions.ReadUint16LengthPrefixed(&extData) {
 			return false
 		}
+
+		if seenExts[extension] {
+			return false
+		}
+		seenExts[extension] = true
 
 		switch extension {
 		case extensionALPN:
@@ -1469,6 +1100,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			if !extData.CopyBytes(m.echRetryConfigs) {
 				return false
 			}
+		case extensionServerName:
+			if len(extData) != 0 {
+				return false
+			}
+			m.serverNameAck = true
 		default:
 			// Ignore unknown extensions.
 			continue
@@ -2164,7 +1800,7 @@ func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 		}
 		sigAndHashLen := uint16(data[0])<<8 | uint16(data[1])
 		data = data[2:]
-		if sigAndHashLen&1 != 0 {
+		if sigAndHashLen&1 != 0 || sigAndHashLen == 0 {
 			return false
 		}
 		if len(data) < int(sigAndHashLen) {
@@ -2260,18 +1896,6 @@ func (m *newSessionTicketMsg) marshal() ([]byte, error) {
 	x[8] = uint8(ticketLen >> 8)
 	x[9] = uint8(ticketLen)
 	copy(x[10:], m.ticket)
-
-	// [Psiphon]
-	// Set lifetime hint to a more typical value.
-	if obfuscateSessionTickets {
-		hints := []int{300, 1200, 7200, 10800, 64800, 100800, 129600}
-		index := prng.Intn(len(hints))
-		hint := hints[index]
-		x[4] = uint8(hint >> 24)
-		x[5] = uint8(hint >> 16)
-		x[6] = uint8(hint >> 8)
-		x[7] = uint8(hint)
-	}
 
 	return x, nil
 }

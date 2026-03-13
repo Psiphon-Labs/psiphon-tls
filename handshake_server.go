@@ -5,22 +5,19 @@
 package tls
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/subtle"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
-	"net"
 	"time"
-
-	"github.com/Psiphon-Labs/psiphon-tls/byteorder"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -43,136 +40,7 @@ type serverHandshakeState struct {
 
 // serverHandshake performs a TLS handshake as a server.
 func (c *Conn) serverHandshake(ctx context.Context) error {
-	clientHello, err := c.readClientHello(ctx)
-
-	// [Psiphon]
-	// The ClientHello with the passthrough message is now available. Route the
-	// client to passthrough based on message inspection. This code assumes the
-	// client TCP conn has been wrapped with recorderConn, which has recorded
-	// all bytes sent by the client, which will be replayed, byte-for-byte, to
-	// the passthrough; as a result, passthrough clients will perform their TLS
-	// handshake with the passthrough target, receive its certificate, and in the
-	// case of HTTPS, receive the passthrough target's HTTP responses.
-	//
-	// Passthrough is also triggered if readClientHello fails. E.g., on other
-	// invalid input cases including "tls: handshake message of length..." or if
-	// the ClientHello is otherwise invalid. This ensures that clients sending
-	// random data will be relayed to the passthrough and not receive a
-	// distinguishing error response.
-	//
-	// The `tls` API performs handshakes on demand. E.g., the first call to
-	// tls.Conn.Read will perform a handshake if it's not yet been performed.
-	// Consumers such as `http` may call Read and then Close. To minimize code
-	// changes, in the passthrough case the ownership of Conn.conn, the client
-	// TCP conn, is transferred to the passthrough relay and a closedConn is
-	// substituted for Conn.conn. This allows the remaining `tls` code paths to
-	// continue reference a net.Conn, albeit one that is closed, so Reads and
-	// Writes will fail.
-
-	if c.config.PassthroughAddress != "" {
-
-		doPassthrough := false
-
-		if err != nil {
-			doPassthrough = true
-			err = fmt.Errorf("passthrough: %s", err)
-		}
-
-		clientAddr := c.conn.RemoteAddr().String()
-		clientIP, _, _ := net.SplitHostPort(clientAddr)
-
-		if !doPassthrough {
-			if !c.config.PassthroughVerifyMessage(clientHello.random) {
-
-				c.config.PassthroughLogInvalidMessage(clientIP)
-
-				doPassthrough = true
-				err = errors.New("passthrough: invalid client random")
-			}
-		}
-
-		if !doPassthrough {
-			if !c.config.PassthroughHistoryAddNew(
-				clientIP, clientHello.random) {
-
-				doPassthrough = true
-				err = errors.New("passthrough: duplicate client random")
-
-			}
-		}
-
-		// Call GetReadBuffer, in both passthrough and non-passthrough cases, to
-		// stop buffering all read bytes.
-
-		passthroughReadBuffer := c.conn.(*recorderConn).GetReadBuffer().Bytes()
-
-		if doPassthrough {
-
-			// When performing passthrough, we must exit at the "return err" below.
-			// This is a failsafe to ensure err is always set.
-			if err == nil {
-				err = errors.New("passthrough: missing error")
-			}
-
-			// Modifying c.conn directly is safe only because Conn.Handshake, which
-			// calls Conn.serverHandshake, is holding c.handshakeMutex and c.in locks,
-			// and because of the serial nature of c.conn access during the handshake
-			// sequence.
-			conn := c.conn
-			c.conn = newClosedConn(conn)
-
-			go func() {
-
-				// Perform the passthrough relay.
-				//
-				// Limitations:
-				//
-				// - The local TCP stack may differ from passthrough target in a
-				//   detectable way.
-				//
-				// - There may be detectable timing characteristics due to the network hop
-				//   to the passthrough target.
-				//
-				// - Application-level socket operations may produce detectable
-				//   differences (e.g., CloseWrite/FIN).
-				//
-				// - The dial to the passthrough, or other upstream network operations,
-				//   may fail. These errors are not logged.
-				//
-				// - There's no timeout on the passthrough dial and no time limit on the
-				//   passthrough relay so that the invalid client can't detect a timeout
-				//   shorter than the passthrough target; this may cause additional load.
-
-				defer conn.Close()
-
-				// Remove any pre-existing deadlines to ensure the passthrough
-				// is not interrupted.
-				_ = conn.SetDeadline(time.Time{})
-
-				passthroughConn, err := net.Dial("tcp", c.config.PassthroughAddress)
-				if err != nil {
-					return
-				}
-				defer passthroughConn.Close()
-
-				_, err = passthroughConn.Write(passthroughReadBuffer)
-				if err != nil {
-					return
-				}
-
-				// Allow garbage collection.
-				passthroughReadBuffer = nil
-
-				go func() {
-					_, _ = io.Copy(passthroughConn, conn)
-					passthroughConn.Close()
-				}()
-				_, _ = io.Copy(conn, passthroughConn)
-			}()
-
-		}
-	}
-
+	clientHello, ech, err := c.readClientHello(ctx)
 	if err != nil {
 		return err
 	}
@@ -182,6 +50,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 			c:           c,
 			ctx:         ctx,
 			clientHello: clientHello,
+			echContext:  ech,
 		}
 		return hs.handshake()
 	}
@@ -261,108 +130,36 @@ func (hs *serverHandshakeState) handshake() error {
 	return nil
 }
 
-// [Psiphon]
-// recorderConn is a net.Conn which records all bytes read from the wrapped
-// conn until GetReadBuffer is called, which returns the buffered bytes and
-// stops recording. This is used to replay, byte-for-byte, the bytes sent by a
-// client when switching to passthrough.
-//
-// recorderConn operations are not safe for concurrent use and intended only
-// to be used in the initial phase of the TLS handshake, where the order of
-// operations is deterministic.
-type recorderConn struct {
-	net.Conn
-	readBuffer *bytes.Buffer
-}
-
-func newRecorderConn(conn net.Conn) *recorderConn {
-	return &recorderConn{
-		Conn:       conn,
-		readBuffer: new(bytes.Buffer),
-	}
-}
-
-func (c *recorderConn) Read(p []byte) (n int, err error) {
-	n, err = c.Conn.Read(p)
-	if n > 0 && c.readBuffer != nil {
-		_, _ = c.readBuffer.Write(p[:n])
-	}
-	return n, err
-}
-
-func (c *recorderConn) GetReadBuffer() *bytes.Buffer {
-	b := c.readBuffer
-	c.readBuffer = nil
-	return b
-}
-
-func (c *recorderConn) IsRecording() bool {
-	return c.readBuffer != nil
-}
-
-// [Psiphon]
-// closedConn is a net.Conn which behaves as if it were closed: all reads and
-// writes fail. This is used when switching to passthrough mode: ownership of
-// the invalid client conn is taken by the passthrough relay and a closedConn
-// replaces the network conn used by the local TLS server code path.
-type closedConn struct {
-	localAddr  net.Addr
-	remoteAddr net.Addr
-}
-
-var closedClosedError = errors.New("closed")
-
-func newClosedConn(conn net.Conn) *closedConn {
-	return &closedConn{
-		localAddr:  conn.LocalAddr(),
-		remoteAddr: conn.RemoteAddr(),
-	}
-}
-
-func (c *closedConn) Read(_ []byte) (int, error) {
-	return 0, closedClosedError
-}
-
-func (c *closedConn) Write(_ []byte) (int, error) {
-	return 0, closedClosedError
-}
-
-func (c *closedConn) Close() error {
-	return nil
-}
-
-func (c *closedConn) LocalAddr() net.Addr {
-	return c.localAddr
-}
-
-func (c *closedConn) RemoteAddr() net.Addr {
-	return c.remoteAddr
-}
-
-func (c *closedConn) SetDeadline(_ time.Time) error {
-	return closedClosedError
-}
-
-func (c *closedConn) SetReadDeadline(_ time.Time) error {
-	return closedClosedError
-}
-
-func (c *closedConn) SetWriteDeadline(_ time.Time) error {
-	return closedClosedError
-}
-
 // readClientHello reads a ClientHello message and selects the protocol version.
-func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
+func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServerContext, error) {
 	// clientHelloMsg is included in the transcript, but we haven't initialized
 	// it yet. The respective handshake functions will record it themselves.
 	msg, err := c.readHandshake(nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	clientHello, ok := msg.(*clientHelloMsg)
 	if !ok {
 		c.sendAlert(alertUnexpectedMessage)
-		return nil, unexpectedMessageError(clientHello, msg)
+		return nil, nil, unexpectedMessageError(clientHello, msg)
+	}
+
+	// ECH processing has to be done before we do any other negotiation based on
+	// the contents of the client hello, since we may swap it out completely.
+	var ech *echServerContext
+	if len(clientHello.encryptedClientHello) != 0 {
+		echKeys := c.config.EncryptedClientHelloKeys
+		if c.config.GetEncryptedClientHelloKeys != nil {
+			echKeys, err = c.config.GetEncryptedClientHelloKeys(clientHelloInfo(ctx, c, clientHello))
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return nil, nil, err
+			}
+		}
+		clientHello, ech, err = c.processECHClientHello(clientHello, echKeys)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	var configForClient *Config
@@ -371,7 +168,7 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 		chi := clientHelloInfo(ctx, c, clientHello)
 		if configForClient, err = c.config.GetConfigForClient(chi); err != nil {
 			c.sendAlert(alertInternalError)
-			return nil, err
+			return nil, nil, err
 		} else if configForClient != nil {
 			c.config = configForClient
 		}
@@ -379,25 +176,44 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 	c.ticketKeys = originalConfig.ticketKeys(configForClient)
 
 	clientVersions := clientHello.supportedVersions
-	if len(clientHello.supportedVersions) == 0 {
+	if clientHello.vers >= VersionTLS13 && len(clientVersions) == 0 {
+		// RFC 8446 4.2.1 indicates when the supported_versions extension is not sent,
+		// compatible servers MUST negotiate TLS 1.2 or earlier if supported, even
+		// if the client legacy version is TLS 1.3 or later.
+		//
+		// Since we reject empty extensionSupportedVersions in the client hello unmarshal
+		// finding the supportedVersions empty indicates the extension was not present.
+		clientVersions = supportedVersionsFromMax(VersionTLS12)
+	} else if len(clientVersions) == 0 {
 		clientVersions = supportedVersionsFromMax(clientHello.vers)
 	}
 	c.vers, ok = c.config.mutualVersion(roleServer, clientVersions)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
-		return nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)
+		return nil, nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)
 	}
 	c.haveVers = true
 	c.in.version = c.vers
 	c.out.version = c.vers
 
-	// [Psiphon]
-	// if c.config.MinVersion == 0 && c.vers < VersionTLS12 {
-	// 	tls10server.Value() // ensure godebug is initialized
-	// 	tls10server.IncNonDefault()
-	// }
+	// This check reflects some odd specification implied behavior. Client-facing servers
+	// are supposed to reject hellos with outer ECH and inner ECH that offers 1.2, but
+	// backend servers are allowed to accept hellos with inner ECH that offer 1.2, since
+	// they cannot expect client-facing servers to behave properly. Since we act as both
+	// a client-facing and backend server, we only enforce 1.3 being negotiated if we
+	// saw a hello with outer ECH first. The spec probably should've made this an error,
+	// but it didn't, and this matches the boringssl behavior.
+	if c.vers != VersionTLS13 && (ech != nil && !ech.inner) {
+		c.sendAlert(alertIllegalParameter)
+		return nil, nil, errors.New("tls: Encrypted Client Hello cannot be used pre-TLS 1.3")
+	}
 
-	return clientHello, nil
+	if c.config.MinVersion == 0 && c.vers < VersionTLS12 {
+		tls10server.Value() // ensure godebug is initialized
+		tls10server.IncNonDefault()
+	}
+
+	return clientHello, ech, nil
 }
 
 func (hs *serverHandshakeState) processClientHello() error {
@@ -416,7 +232,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 	}
 
 	if !foundCompression {
-		c.sendAlert(alertHandshakeFailure)
+		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: client does not support uncompressed connections")
 	}
 
@@ -471,7 +287,11 @@ func (hs *serverHandshakeState) processClientHello() error {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
 	}
 
-	hs.ecdheOk = supportsECDHE(c.config, c.vers, hs.clientHello.supportedCurves, hs.clientHello.supportedPoints)
+	hs.ecdheOk, err = supportsECDHE(c.config, c.vers, hs.clientHello.supportedCurves, hs.clientHello.supportedPoints)
+	if err != nil {
+		c.sendAlert(alertMissingExtension)
+		return err
+	}
 
 	if hs.ecdheOk && len(hs.clientHello.supportedPoints) > 0 {
 		// Although omitting the ec_point_formats extension is permitted, some
@@ -537,12 +357,12 @@ func negotiateALPN(serverProtos, clientProtos []string, quic bool) (string, erro
 	if http11fallback {
 		return "", nil
 	}
-	return "", fmt.Errorf("tls: client requested unsupported application protocols (%s)", clientProtos)
+	return "", fmt.Errorf("tls: client requested unsupported application protocols (%q)", clientProtos)
 }
 
 // supportsECDHE returns whether ECDHE key exchanges can be used with this
 // pre-TLS 1.3 client.
-func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, supportedPoints []uint8) bool {
+func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, supportedPoints []uint8) (bool, error) {
 	supportsCurve := false
 	for _, curve := range supportedCurves {
 		if c.supportsCurve(version, curve) {
@@ -552,10 +372,12 @@ func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, support
 	}
 
 	supportsPointFormat := false
+	offeredNonCompressedFormat := false
 	for _, pointFormat := range supportedPoints {
 		if pointFormat == pointFormatUncompressed {
 			supportsPointFormat = true
-			break
+		} else {
+			offeredNonCompressedFormat = true
 		}
 	}
 	// Per RFC 8422, Section 5.1.2, if the Supported Point Formats extension is
@@ -564,47 +386,34 @@ func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, support
 	// the parser. See https://go.dev/issue/49126.
 	if len(supportedPoints) == 0 {
 		supportsPointFormat = true
+	} else if offeredNonCompressedFormat && !supportsPointFormat {
+		return false, errors.New("tls: client offered only incompatible point formats")
 	}
 
-	return supportsCurve && supportsPointFormat
+	return supportsCurve && supportsPointFormat, nil
 }
 
 func (hs *serverHandshakeState) pickCipherSuite() error {
 	c := hs.c
 
-	preferenceOrder := cipherSuitesPreferenceOrder
-	if !hasAESGCMHardwareSupport || !aesgcmPreferred(hs.clientHello.cipherSuites) {
-		preferenceOrder = cipherSuitesPreferenceOrderNoAES
-	}
-
-	configCipherSuites := c.config.cipherSuites()
-	preferenceList := make([]uint16, 0, len(configCipherSuites))
-	for _, suiteID := range preferenceOrder {
-		for _, id := range configCipherSuites {
-			if id == suiteID {
-				preferenceList = append(preferenceList, id)
-				break
-			}
-		}
-	}
+	preferenceList := c.config.cipherSuites(isAESGCMPreferred(hs.clientHello.cipherSuites))
 
 	hs.suite = selectCipherSuite(preferenceList, hs.clientHello.cipherSuites, hs.cipherSuiteOk)
 	if hs.suite == nil {
 		c.sendAlert(alertHandshakeFailure)
-		return errors.New("tls: no cipher suite supported by both client and server")
+		return fmt.Errorf("tls: no cipher suite supported by both client and server; client offered: %x",
+			hs.clientHello.cipherSuites)
 	}
 	c.cipherSuite = hs.suite.id
 
-	// [Psiphon] BEGIN
-	// if c.config.CipherSuites == nil && !needFIPS() && rsaKexCiphers[hs.suite.id] {
-	// 	tlsrsakex.Value() // ensure godebug is initialized
-	// 	tlsrsakex.IncNonDefault()
-	// }
-	// if c.config.CipherSuites == nil && !needFIPS() && tdesCiphers[hs.suite.id] {
-	// 	tls3des.Value() // ensure godebug is initialized
-	// 	tls3des.IncNonDefault()
-	// }
-	// [Psiphon] END
+	if c.config.CipherSuites == nil && !fips140tls.Required() && rsaKexCiphers[hs.suite.id] {
+		tlsrsakex.Value() // ensure godebug is initialized
+		tlsrsakex.IncNonDefault()
+	}
+	if c.config.CipherSuites == nil && !fips140tls.Required() && tdesCiphers[hs.suite.id] {
+		tls3des.Value() // ensure godebug is initialized
+		tls3des.IncNonDefault()
+	}
 
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
@@ -698,7 +507,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 
 	// Check that we also support the ciphersuite from the session.
 	suite := selectCipherSuite([]uint16{sessionState.cipherSuite},
-		c.config.cipherSuites(), hs.cipherSuiteOk)
+		c.config.supportedCipherSuites(), hs.cipherSuiteOk)
 	if suite == nil {
 		return nil
 	}
@@ -714,8 +523,13 @@ func (hs *serverHandshakeState) checkForResumption() error {
 	if sessionHasClientCerts && c.config.time().After(sessionState.peerCertificates[0].NotAfter) {
 		return nil
 	}
+	opts := x509.VerifyOptions{
+		CurrentTime: c.config.time(),
+		Roots:       c.config.ClientCAs,
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
 	if sessionHasClientCerts && c.config.ClientAuth >= VerifyClientCertIfGiven &&
-		len(sessionState.verifiedChains) == 0 {
+		!anyValidVerifiedChain(sessionState.verifiedChains, opts) {
 		return nil
 	}
 
@@ -728,6 +542,10 @@ func (hs *serverHandshakeState) checkForResumption() error {
 		// weird downgrade in client capabilities.
 		return errors.New("tls: session supported extended_master_secret but client does not")
 	}
+	if !sessionState.extMasterSecret && fips140tls.Required() {
+		// FIPS 140-3 requires the use of Extended Master Secret.
+		return nil
+	}
 
 	c.peerCertificates = sessionState.peerCertificates
 	c.ocspResponse = sessionState.ocspResponse
@@ -736,6 +554,7 @@ func (hs *serverHandshakeState) checkForResumption() error {
 	c.extMasterSecret = sessionState.extMasterSecret
 	hs.sessionState = sessionState
 	hs.suite = suite
+	c.curveID = sessionState.curveID
 	c.didResume = true
 	return nil
 }
@@ -780,6 +599,10 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		hs.hello.ocspStapling = true
 	}
 
+	if hs.clientHello.serverName != "" {
+		hs.hello.serverNameAck = true
+	}
+
 	hs.hello.ticketSupported = hs.clientHello.ticketSupported && !c.config.SessionTicketsDisabled
 	hs.hello.cipherSuite = hs.suite.id
 
@@ -817,8 +640,9 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		return err
 	}
 	if skx != nil {
-		if len(skx.key) >= 3 && skx.key[0] == 3 /* named curve */ {
-			c.curveID = CurveID(byteorder.BeUint16(skx.key[1:]))
+		if keyAgreement, ok := keyAgreement.(*ecdheKeyAgreement); ok {
+			c.curveID = keyAgreement.curveID
+			c.peerSigAlg = keyAgreement.signatureAlgorithm
 		}
 		if _, err := hs.c.writeHandshakeRecord(skx, &hs.finishedHash); err != nil {
 			return err
@@ -835,7 +659,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 		if c.vers >= VersionTLS12 {
 			certReq.hasSignatureAlgorithm = true
-			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms()
+			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers)
 		}
 
 		// An empty list of certificateAuthorities signals to
@@ -906,7 +730,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 	preMasterSecret, err := keyAgreement.processClientKeyExchange(c.config, hs.cert, ckx, c.vers)
 	if err != nil {
-		c.sendAlert(alertHandshakeFailure)
+		c.sendAlert(alertIllegalParameter)
 		return err
 	}
 	if hs.hello.extendedMasterSecret {
@@ -914,6 +738,10 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		hs.masterSecret = extMasterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret,
 			hs.finishedHash.Sum())
 	} else {
+		if fips140tls.Required() {
+			c.sendAlert(alertHandshakeFailure)
+			return errors.New("tls: FIPS 140-3 requires the use of Extended Master Secret")
+		}
 		hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret,
 			hs.clientHello.random, hs.hello.random)
 	}
@@ -953,19 +781,32 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			if err != nil {
 				return c.sendAlert(alertInternalError)
 			}
+			if sigHash == crypto.SHA1 {
+				tlssha1.Value() // ensure godebug is initialized
+				tlssha1.IncNonDefault()
+			}
+			if hs.finishedHash.buffer == nil {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: internal error: did not keep handshake transcript for TLS 1.2")
+			}
+			if err := verifyHandshakeSignature(sigType, pub, sigHash, hs.finishedHash.buffer, certVerify.signature); err != nil {
+				c.sendAlert(alertDecryptError)
+				return errors.New("tls: invalid signature by the client certificate: " + err.Error())
+			}
 		} else {
 			sigType, sigHash, err = legacyTypeAndHashFromPublicKey(pub)
 			if err != nil {
 				c.sendAlert(alertIllegalParameter)
 				return err
 			}
+			signed := hs.finishedHash.hashForClientCertificate(sigType)
+			if err := verifyLegacyHandshakeSignature(sigType, pub, sigHash, signed, certVerify.signature); err != nil {
+				c.sendAlert(alertDecryptError)
+				return errors.New("tls: invalid signature by the client certificate: " + err.Error())
+			}
 		}
 
-		signed := hs.finishedHash.hashForClientCertificate(sigType, sigHash)
-		if err := verifyHandshakeSignature(sigType, pub, sigHash, signed, certVerify.signature); err != nil {
-			c.sendAlert(alertDecryptError)
-			return errors.New("tls: invalid signature by the client certificate: " + err.Error())
-		}
+		c.peerSigAlg = certVerify.signatureAlgorithm
 
 		if err := transcriptMsg(certVerify, &hs.finishedHash); err != nil {
 			return err
@@ -1095,14 +936,14 @@ func (hs *serverHandshakeState) sendFinished(out []byte) error {
 }
 
 // processCertsFromClient takes a chain of client certificates either from a
-// Certificates message and verifies them.
+// certificateMsg message or a certificateMsgTLS13 message and verifies them.
 func (c *Conn) processCertsFromClient(certificate Certificate) error {
 	certificates := certificate.Certificate
 	certs := make([]*x509.Certificate, len(certificates))
 	var err error
 	for i, asn1Data := range certificates {
 		if certs[i], err = x509.ParseCertificate(asn1Data); err != nil {
-			c.sendAlert(alertBadCertificate)
+			c.sendAlert(alertDecodeError)
 			return errors.New("tls: failed to parse client certificate: " + err.Error())
 		}
 		if certs[i].PublicKeyAlgorithm == x509.RSA {
@@ -1118,7 +959,7 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 		if c.vers == VersionTLS13 {
 			c.sendAlert(alertCertificateRequired)
 		} else {
-			c.sendAlert(alertBadCertificate)
+			c.sendAlert(alertHandshakeFailure)
 		}
 		return errors.New("tls: client didn't provide a certificate")
 	}
@@ -1137,10 +978,9 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 
 		chains, err := certs[0].Verify(opts)
 		if err != nil {
-			var errCertificateInvalid x509.CertificateInvalidError
-			if errors.As(err, &x509.UnknownAuthorityError{}) {
+			if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
 				c.sendAlert(alertUnknownCA)
-			} else if errors.As(err, &errCertificateInvalid) && errCertificateInvalid.Reason == x509.Expired {
+			} else if errCertificateInvalid, ok := errors.AsType[x509.CertificateInvalidError](err); ok && errCertificateInvalid.Reason == x509.Expired {
 				c.sendAlert(alertCertificateExpired)
 			} else {
 				c.sendAlert(alertBadCertificate)
@@ -1148,7 +988,11 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
 		}
 
-		c.verifiedChains = chains
+		c.verifiedChains, err = fipsAllowedChains(chains)
+		if err != nil {
+			c.sendAlert(alertBadCertificate)
+			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
+		}
 	}
 
 	c.peerCertificates = certs
@@ -1188,7 +1032,9 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		SignatureSchemes:  clientHello.supportedSignatureAlgorithms,
 		SupportedProtos:   clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
+		Extensions:        clientHello.extensions,
 		Conn:              c.conn,
+		HelloRetryRequest: c.didHRR,
 		config:            c.config,
 		ctx:               ctx,
 	}

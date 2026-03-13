@@ -8,21 +8,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
-	"encoding/binary"
 	"errors"
 	"io"
-	"math/big"
-	math_rand "math/rand"
 
 	"golang.org/x/crypto/cryptobyte"
 )
-
-// [Psiphon]
-var obfuscateSessionTickets = true
 
 // A SessionState is a resumable session.
 type SessionState struct {
@@ -51,20 +44,21 @@ type SessionState struct {
 	//           case 0: Empty;
 	//           case 1: opaque alpn<1..2^8-1>;
 	//       };
-	//       select (SessionState.type) {
-	//           case server: Empty;
-	//           case client: struct {
-	//               select (SessionState.version) {
-	//                   case VersionTLS10..VersionTLS12: Empty;
-	//                   case VersionTLS13: struct {
-	//                       uint64 use_by;
-	//                       uint32 age_add;
-	//                   };
+	//       select (SessionState.version) {
+	//           case VersionTLS10..VersionTLS12: uint16 curve_id;
+	//           case VersionTLS13: select (SessionState.type) {
+	//               case server: Empty;
+	//               case client: struct {
+	//                   uint64 use_by;
+	//                   uint32 age_add;
 	//               };
 	//           };
 	//       };
 	//   } SessionState;
 	//
+	// The format can be extended backwards-compatibly by adding new fields at
+	// the end. Otherwise, a new SessionStateType must be used, as different Go
+	// versions may share the same session ticket encryption key.
 
 	// Extra is ignored by crypto/tls, but is encoded by [SessionState.Bytes]
 	// and parsed by [ParseSessionState].
@@ -87,23 +81,25 @@ type SessionState struct {
 	version     uint16
 	isClient    bool
 	cipherSuite uint16
-	// createdAt is the generation time of the secret on the sever (which for
+	// createdAt is the generation time of the secret on the server (which for
 	// TLS 1.0–1.2 might be earlier than the current session) and the time at
 	// which the ticket was received on the client.
-	createdAt         uint64 // seconds since UNIX epoch
-	secret            []byte // master secret for TLS 1.2, or the PSK for TLS 1.3
-	extMasterSecret   bool
-	peerCertificates  []*x509.Certificate
-	activeCertHandles []*activeCert
-	ocspResponse      []byte
-	scts              [][]byte
-	verifiedChains    [][]*x509.Certificate
-	alpnProtocol      string // only set if EarlyData is true
+	createdAt        uint64 // seconds since UNIX epoch
+	secret           []byte // master secret for TLS 1.2, or the PSK for TLS 1.3
+	extMasterSecret  bool
+	peerCertificates []*x509.Certificate
+	ocspResponse     []byte
+	scts             [][]byte
+	verifiedChains   [][]*x509.Certificate
+	alpnProtocol     string // only set if EarlyData is true
 
 	// Client-side TLS 1.3-only fields.
 	useBy  uint64 // seconds since UNIX epoch
 	ageAdd uint32
 	ticket []byte
+
+	// TLS 1.0–1.2 only fields.
+	curveID CurveID
 }
 
 // Bytes encodes the session, including any private fields, so that it can be
@@ -168,39 +164,15 @@ func (s *SessionState) Bytes() ([]byte, error) {
 			b.AddBytes([]byte(s.alpnProtocol))
 		})
 	}
-	if s.isClient {
-		if s.version >= VersionTLS13 {
+	if s.version >= VersionTLS13 {
+		if s.isClient {
 			addUint64(&b, s.useBy)
 			b.AddUint32(s.ageAdd)
 		}
+	} else {
+		b.AddUint16(uint16(s.curveID))
 	}
-
-	// [Psiphon]
-	bytes, err := b.Bytes()
-	if err != nil {
-		return nil, err
-	}
-
-	// [Psiphon]
-	// Pad golang TLS session ticket to a more typical size.
-	if obfuscateSessionTickets {
-		paddedSizes := []int{160, 176, 192, 208, 218, 224, 240, 255}
-		initialSize := 120
-		randomInt, err := rand.Int(rand.Reader, big.NewInt(int64(len(paddedSizes))))
-		index := 0
-		if err == nil {
-			index = int(randomInt.Int64())
-		} else {
-			index = math_rand.Intn(len(paddedSizes))
-		}
-		paddingSize := paddedSizes[index] - initialSize
-
-		ret := make([]byte, len(bytes)+paddingSize)
-		copy(ret, bytes)
-		return ret, nil
-	}
-
-	return bytes, nil
+	return b.Bytes()
 }
 
 func certificatesToBytesSlice(certs []*x509.Certificate) [][]byte {
@@ -220,7 +192,6 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 	var extra cryptobyte.String
 	if !s.ReadUint16(&ss.version) ||
 		!s.ReadUint8(&typ) ||
-		(typ != 1 && typ != 2) ||
 		!s.ReadUint16(&ss.cipherSuite) ||
 		!readUint64(&s, &ss.createdAt) ||
 		!readUint8LengthPrefixed(&s, &ss.secret) ||
@@ -237,6 +208,14 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 			return nil, errors.New("tls: invalid session encoding")
 		}
 		ss.Extra = append(ss.Extra, e)
+	}
+	switch typ {
+	case 1:
+		ss.isClient = false
+	case 2:
+		ss.isClient = true
+	default:
+		return nil, errors.New("tls: unknown session encoding")
 	}
 	switch extMasterSecret {
 	case 0:
@@ -259,8 +238,10 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		if err != nil {
 			return nil, err
 		}
-		ss.activeCertHandles = append(ss.activeCertHandles, c)
-		ss.peerCertificates = append(ss.peerCertificates, c.cert)
+		ss.peerCertificates = append(ss.peerCertificates, c)
+	}
+	if ss.isClient && len(ss.peerCertificates) == 0 {
+		return nil, errors.New("tls: no server certificates in client session")
 	}
 	ss.ocspResponse = cert.OCSPStaple
 	ss.scts = cert.SignedCertificateTimestamps
@@ -287,8 +268,7 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 			if err != nil {
 				return nil, err
 			}
-			ss.activeCertHandles = append(ss.activeCertHandles, c)
-			chain = append(chain, c.cert)
+			chain = append(chain, c)
 		}
 		ss.verifiedChains = append(ss.verifiedChains, chain)
 	}
@@ -299,26 +279,16 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		}
 		ss.alpnProtocol = string(alpn)
 	}
-	if isClient := typ == 2; !isClient {
-		// [Psiphon]
-		// Ignore padding for obfuscated session tickets.
-		if !s.Empty() && !allZeros(s) {
+	if ss.version >= VersionTLS13 {
+		if ss.isClient {
+			if !s.ReadUint64(&ss.useBy) || !s.ReadUint32(&ss.ageAdd) {
+				return nil, errors.New("tls: invalid session encoding")
+			}
+		}
+	} else {
+		if !s.ReadUint16((*uint16)(&ss.curveID)) {
 			return nil, errors.New("tls: invalid session encoding")
 		}
-		return ss, nil
-	}
-	ss.isClient = true
-	if len(ss.peerCertificates) == 0 {
-		return nil, errors.New("tls: no server certificates in client session")
-	}
-	if ss.version < VersionTLS13 {
-		if !s.Empty() {
-			return nil, errors.New("tls: invalid session encoding")
-		}
-		return ss, nil
-	}
-	if !s.ReadUint64(&ss.useBy) || !s.ReadUint32(&ss.ageAdd) || !s.Empty() {
-		return nil, errors.New("tls: invalid session encoding")
 	}
 	return ss, nil
 }
@@ -327,17 +297,17 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 // from the current connection.
 func (c *Conn) sessionState() *SessionState {
 	return &SessionState{
-		version:           c.vers,
-		cipherSuite:       c.cipherSuite,
-		createdAt:         uint64(c.config.time().Unix()),
-		alpnProtocol:      c.clientProtocol,
-		peerCertificates:  c.peerCertificates,
-		activeCertHandles: c.activeCertHandles,
-		ocspResponse:      c.ocspResponse,
-		scts:              c.scts,
-		isClient:          c.isClient,
-		extMasterSecret:   c.extMasterSecret,
-		verifiedChains:    c.verifiedChains,
+		version:          c.vers,
+		cipherSuite:      c.cipherSuite,
+		createdAt:        uint64(c.config.time().Unix()),
+		alpnProtocol:     c.clientProtocol,
+		peerCertificates: c.peerCertificates,
+		ocspResponse:     c.ocspResponse,
+		scts:             c.scts,
+		isClient:         c.isClient,
+		extMasterSecret:  c.extMasterSecret,
+		verifiedChains:   c.verifiedChains,
+		curveID:          c.curveID,
 	}
 }
 
@@ -457,155 +427,4 @@ func NewResumptionState(ticket []byte, state *SessionState) (*ClientSessionState
 	return &ClientSessionState{
 		session: state,
 	}, nil
-}
-
-// [Psiphon]
-type ObfuscatedClientSessionState struct {
-	SessionTicket      []uint8
-	Vers               uint16
-	CipherSuite        uint16
-	CreatedAt          uint64 // seconds since UNIX epoch
-	MasterSecret       []byte
-	ServerCertificates []*x509.Certificate
-	VerifiedChains     [][]*x509.Certificate
-	ExtMasterSecret    bool
-
-	// Client-side TLS 1.3-only fields.
-	UseBy  uint64 // seconds since UNIX epoch
-	AgeAdd uint32
-}
-
-var obfuscatedSessionTicketCipherSuite_TLS12 = TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-var obfuscatedSessionTicketCipherSuite_TLS13 = TLS_AES_128_GCM_SHA256
-
-// [Psiphon]
-// NewObfuscatedClientSessionState produces obfuscated session tickets or PSK.
-//
-// # Obfuscated Session Tickets
-//
-// Obfuscated session tickets is a network traffic obfuscation protocol that appears
-// to be valid TLS using session tickets. The client actually generates the session
-// ticket and encrypts it with a shared secret, enabling a TLS session that entirely
-// skips the most fingerprintable aspects of TLS.
-// The scheme is described here:
-// https://lists.torproject.org/pipermail/tor-dev/2016-September/011354.html
-//
-// Circumvention notes:
-//   - TLS session ticket implementations are widespread:
-//     https://istlsfastyet.com/#cdn-paas.
-//   - An adversary cannot easily block session ticket capability, as this requires
-//     a downgrade attack against TLS.
-//   - Anti-probing defence is provided, as the adversary must use the correct obfuscation
-//     shared secret to form valid obfuscation session ticket; otherwise server offers
-//     standard session tickets.
-//   - Limitation: an adversary with the obfuscation shared secret can decrypt the session
-//     ticket and observe the plaintext traffic. It's assumed that the adversary will not
-//     learn the obfuscated shared secret without also learning the address of the TLS
-//     server and blocking it anyway; it's also assumed that the TLS payload is not
-//     plaintext but is protected with some other security layer (e.g., SSH).
-//
-// Implementation notes:
-//   - The TLS ClientHello includes an SNI field, even when using session tickets, so
-//     the client should populate the ServerName.
-//   - Server should set its SetSessionTicketKeys with first a standard key, followed by
-//     the obfuscation shared secret.
-//   - Since the client creates the session ticket, it selects parameters that were not
-//     negotiated with the server, such as the cipher suite. It's implicitly assumed that
-//     the server can support the selected parameters.
-func NewObfuscatedClientSessionState(
-	sharedSecret [32]byte, isTLS13 bool, extMasterSecret bool) (*ObfuscatedClientSessionState, error) {
-
-	// Create a session ticket that wasn't actually issued by the server.
-	vers := uint16(VersionTLS12)
-	cipherSuite := obfuscatedSessionTicketCipherSuite_TLS12
-	if isTLS13 {
-		vers = VersionTLS13
-		cipherSuite = obfuscatedSessionTicketCipherSuite_TLS13
-	}
-
-	masterSecret := make([]byte, masterSecretLength)
-	_, err := rand.Read(masterSecret)
-	if err != nil {
-		return nil, err
-	}
-
-	config := &Config{}
-
-	ageAdd := make([]byte, 4)
-	_, err = config.rand().Read(ageAdd)
-	if err != nil {
-		return nil, err
-	}
-
-	lifetime := maxSessionTicketLifetime
-
-	serverState := &SessionState{
-		version:          vers,
-		isClient:         false,
-		cipherSuite:      cipherSuite,
-		createdAt:        uint64(config.time().Unix()),
-		secret:           masterSecret,
-		peerCertificates: nil,
-		extMasterSecret:  extMasterSecret,
-
-		// TLS 1.3 fields
-		useBy:  uint64(config.time().Add(lifetime).Unix()),
-		ageAdd: binary.LittleEndian.Uint32(ageAdd),
-	}
-
-	sessionTicketKeys := []ticketKey{config.ticketKeyFromBytes(sharedSecret)}
-
-	ssBytes, err := serverState.Bytes()
-	if err != nil {
-		return nil, err
-	}
-	sessionTicket, err := config.encryptTicket(ssBytes, sessionTicketKeys)
-	if err != nil {
-		return nil, err
-	}
-
-	// ObfuscatedClientSessionState fields are used to construct
-	// ClientSessionState objects for use in ClientSessionCaches. The client will
-	// use this cache to pretend it got that session ticket from the server.
-	clientState := &ObfuscatedClientSessionState{
-		SessionTicket:   sessionTicket,
-		Vers:            vers,
-		CipherSuite:     cipherSuite,
-		MasterSecret:    masterSecret,
-		ExtMasterSecret: extMasterSecret,
-		UseBy:           serverState.useBy,
-		AgeAdd:          serverState.ageAdd,
-		CreatedAt:       serverState.createdAt,
-	}
-
-	return clientState, nil
-}
-
-func ContainsObfuscatedSessionTicketCipherSuite(cipherSuites []uint16) bool {
-	for _, cipherSuite := range cipherSuites {
-		if cipherSuite == obfuscatedSessionTicketCipherSuite_TLS12 {
-			return true
-		}
-	}
-	return false
-}
-
-func ContainsObfuscatedPSKCipherSuite(cipherSuites []uint16) bool {
-	for _, cipherSuite := range cipherSuites {
-		if cipherSuite == obfuscatedSessionTicketCipherSuite_TLS13 {
-			return true
-		}
-	}
-	return false
-}
-
-// allZeros returns true if remaining bytes are all zero.
-func allZeros(s cryptobyte.String) bool {
-	b := []byte(s)
-	for _, v := range b {
-		if v != 0x0 {
-			return false
-		}
-	}
-	return true
 }
