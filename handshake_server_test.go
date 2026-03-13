@@ -11,7 +11,6 @@ import (
 	"crypto/ecdh"
 	"crypto/elliptic"
 	"crypto/rand"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -28,7 +27,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 )
+
+func init() {
+	// [Psiphon] Disable obfuscation and randomization since its transforms won't
+	// match pre-recorded test data
+	obfuscateSessionTickets = false
+}
 
 func testClientHello(t *testing.T, serverConfig *Config, m handshakeMessage) {
 	t.Helper()

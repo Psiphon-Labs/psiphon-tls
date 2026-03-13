@@ -11,9 +11,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/boring"
 	"crypto/rand"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -21,6 +19,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/boring"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"github.com/Psiphon-Labs/psiphon-tls/testenv"
 	"io"
 	"math"
@@ -965,6 +965,11 @@ func TestCloneNonFuncFields(t *testing.T) {
 			}))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
+		// [Psiphon]
+		case "ClientHelloPRNG", "GetClientHelloRandom", "UseObfuscatedSessionTickets",
+			"PassthroughAddress", "PassthroughVerifyMessage", "PassthroughHistoryAddNew",
+			"PassthroughLogInvalidMessage", "InsecureSkipTimeVerify":
+			continue
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)
 		}
