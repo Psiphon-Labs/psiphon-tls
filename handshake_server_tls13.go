@@ -11,18 +11,21 @@ import (
 	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/hpke"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140/tls13"
 	"crypto/rsa"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"hash"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/byteorder"
 	"io"
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140/tls13"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/byteorder"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
+
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 )
 
 // maxClientPSKIdentities is the number of client PSK identities the server will
@@ -1002,6 +1005,13 @@ func (c *Conn) sendSessionTicket(earlyData bool, extra [][]byte) error {
 		}
 	}
 	m.lifetime = uint32(maxSessionTicketLifetime / time.Second)
+
+	// [Psiphon] Set lifetime hint to a more typical value.
+	if obfuscateSessionTickets {
+		hints := []uint32{300, 1200, 7200, 10800, 64800, 100800, 129600}
+		index := prng.Intn(len(hints))
+		m.lifetime = hints[index]
+	}
 
 	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1
 	// The value is not stored anywhere; we never need to check the ticket age
