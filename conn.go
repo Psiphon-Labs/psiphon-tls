@@ -14,7 +14,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
 	"hash"
 	"io"
 	"net"
@@ -847,6 +846,21 @@ func (c *Conn) readFromUntil(r io.Reader, n int) error {
 
 // sendAlertLocked sends a TLS alert message.
 func (c *Conn) sendAlertLocked(err alert) error {
+
+	// [Psiphon] Do not send TLS alerts before the passthrough state is
+	// determined. Otherwise, an invalid client would receive non-passthrough
+	// traffic.
+	//
+	// Limitation: ClientHello-related alerts to legitimate clients are not sent.
+	// This changes the nature of errors that such clients may report when their
+	// TLS handshake fails. This change in behavior is only visible to legitimate
+	// clients.
+	if c.config.PassthroughAddress != "" {
+		if recorder, ok := c.conn.(*recorderConn); ok && recorder.IsRecording() {
+			return nil
+		}
+	}
+
 	if c.quic != nil {
 		return c.out.setErrorLocked(&net.OpError{Op: "local error", Err: err})
 	}
@@ -1618,9 +1632,8 @@ func (c *Conn) ConnectionState() ConnectionState {
 	return c.connectionStateLocked()
 }
 
-// [Psiphon]
-// ConnectionMetrics returns metrics about the TLS connection that are not
-// available from ConnectionState.
+// [Psiphon] ConnectionMetrics returns metrics about the TLS connection
+// that are not available from ConnectionState.
 func (c *Conn) ConnectionMetrics() ConnectionMetrics {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()

@@ -33,10 +33,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
 )
 
 // Server returns a new TLS server side connection
@@ -44,6 +45,13 @@ import (
 // The configuration config must be non-nil and must include
 // at least one certificate or else set GetCertificate.
 func Server(conn net.Conn, config *Config) *Conn {
+
+	// [Psiphon] Initialize traffic recording to facilitate playback in the
+	// case of passthrough.
+	if config.PassthroughAddress != "" {
+		conn = newRecorderConn(conn)
+	}
+
 	c := &Conn{
 		conn:   conn,
 		config: config,
