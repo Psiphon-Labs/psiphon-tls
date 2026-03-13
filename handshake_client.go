@@ -11,21 +11,23 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hpke"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140/tls13"
 	"crypto/rsa"
 	"crypto/subtle"
-	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"hash"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140/tls13"
 	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140deps/godebug"
+	"github.com/Psiphon-Labs/psiphon-tls/internal/fips140tls"
+	"hash"
 	"io"
 	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 )
 
 type clientHandshakeState struct {
@@ -82,6 +84,29 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 		supportedVersions:            supportedVersions,
 	}
 
+	// [Psiphon]
+	if c.config != nil {
+
+		if c.config.ClientHelloPRNG != nil {
+			hello.marshalerPRNGSeed = new(prng.Seed)
+			_, err := c.config.ClientHelloPRNG.Read(hello.marshalerPRNGSeed[:])
+			if err != nil {
+				return nil, nil, nil, errors.New("tls: short read from ClientHelloPRNG: " + err.Error())
+			}
+		}
+
+		if c.config.GetClientHelloRandom != nil {
+			helloRandom, err := c.config.GetClientHelloRandom()
+			if err == nil && len(helloRandom) != 32 {
+				err = errors.New("invalid length")
+			}
+			if err != nil {
+				return nil, nil, nil, errors.New("tls: GetClientHelloRandom failed: " + err.Error())
+			}
+			copy(hello.random, helloRandom)
+		}
+	}
+
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
 	// for compatibility reasons. The supported_versions extension is used
 	// to negotiate versions now. See RFC 8446, Section 4.2.1.
@@ -101,9 +126,12 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 		})
 	}
 
-	_, err := io.ReadFull(config.rand(), hello.random)
-	if err != nil {
-		return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+	// [Psiphon]
+	if c.config == nil || c.config.GetClientHelloRandom == nil {
+		_, err := io.ReadFull(config.rand(), hello.random)
+		if err != nil {
+			return nil, nil, nil, errors.New("tls: short read from Rand: " + err.Error())
+		}
 	}
 
 	// A random session ID is used to detect when the server accepted a ticket
@@ -282,6 +310,11 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		return err
 	}
 
+	// [Psiphon]
+	if session != nil {
+		c.clientSentTicket = true
+	}
+
 	if hello.earlyData {
 		suite := cipherSuiteTLS13ByID(session.cipherSuite)
 		transcript := suite.hash.New()
@@ -397,10 +430,13 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 		return nil, nil, nil, nil
 	}
 
-	if c.config.time().After(session.peerCertificates[0].NotAfter) {
-		// Expired certificate, delete the entry.
-		c.config.ClientSessionCache.Put(cacheKey, nil)
-		return nil, nil, nil, nil
+	// [Psiphon]
+	if !c.config.InsecureSkipTimeVerify {
+		if c.config.time().After(session.peerCertificates[0].NotAfter) {
+			// Expired certificate, delete the entry.
+			c.config.ClientSessionCache.Put(cacheKey, nil)
+			return nil, nil, nil, nil
+		}
 	}
 	if !c.config.InsecureSkipVerify {
 		if len(session.verifiedChains) == 0 {
