@@ -75,6 +75,9 @@ type Conn struct {
 	resumptionSecret []byte
 	echAccepted      bool
 
+	// [Psiphon]
+	clientSentTicket bool
+
 	// ticketKeys is the set of active session ticket keys for this
 	// connection. The first one is used to encrypt new tickets and
 	// all are tried to decrypt tickets.
@@ -1613,6 +1616,17 @@ func (c *Conn) ConnectionState() ConnectionState {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 	return c.connectionStateLocked()
+}
+
+// [Psiphon]
+// ConnectionMetrics returns metrics about the TLS connection that are not
+// available from ConnectionState.
+func (c *Conn) ConnectionMetrics() ConnectionMetrics {
+	c.handshakeMutex.Lock()
+	defer c.handshakeMutex.Unlock()
+	return ConnectionMetrics{
+		ClientSentTicket: c.clientSentTicket,
+	}
 }
 
 var tlsunsafeekm = godebug.New("tlsunsafeekm")
