@@ -965,6 +965,14 @@ type Config struct {
 	// event.
 	PassthroughLogInvalidMessage func(clientIP string)
 
+	// [Psiphon] ServerHelloMimicryMinimumDelay and
+	// ServerHelloMimicryMaximumDelay define the delay range for adding randomized
+	// timing jitter before emitting a normal ServerHello. The effective delay is
+	// sampled uniformly from [minimum, maximum]. Both default to zero.
+	// ServerHelloMimicryMaximumDelay must be >= ServerHelloMimicryMinimumDelay.
+	ServerHelloMimicryMinimumDelay time.Duration
+	ServerHelloMimicryMaximumDelay time.Duration
+
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
 	// sessionTicketKeys contains zero or more ticket keys. If set, it means
@@ -1101,7 +1109,9 @@ func (c *Config) Clone() *Config {
 		autoSessionTicketKeys:               c.autoSessionTicketKeys,
 
 		// [Psiphon]
-		InsecureSkipTimeVerify: c.InsecureSkipTimeVerify,
+		InsecureSkipTimeVerify:         c.InsecureSkipTimeVerify,
+		ServerHelloMimicryMinimumDelay: c.ServerHelloMimicryMinimumDelay,
+		ServerHelloMimicryMaximumDelay: c.ServerHelloMimicryMaximumDelay,
 	}
 }
 
@@ -1246,6 +1256,26 @@ func (c *Config) time() time.Time {
 		t = time.Now
 	}
 	return t()
+}
+
+// [Psiphon] Sample a randomized ServerHello mimicry delay from the configured
+// [minimum, maximum] range. Returns an error for an invalid range.
+func (c *Config) serverHelloMimicryDelay() (time.Duration, error) {
+	minDelay := c.ServerHelloMimicryMinimumDelay
+	maxDelay := c.ServerHelloMimicryMaximumDelay
+
+	if maxDelay < minDelay {
+		return 0, errors.New("tls: ServerHelloMimicryMaximumDelay must be >= ServerHelloMimicryMinimumDelay")
+	}
+	if maxDelay <= 0 {
+		return 0, nil
+	}
+	if maxDelay == minDelay {
+		return maxDelay, nil
+	}
+
+	span := int64(maxDelay - minDelay)
+	return minDelay + time.Duration(prng.Int63n(span+1)), nil
 }
 
 func (c *Config) cipherSuites(aesGCMPreferred bool) []uint16 {

@@ -737,6 +737,9 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	if err := transcriptMsg(hs.clientHello, hs.transcript); err != nil {
 		return err
 	}
+	if err := c.applyServerHelloMimicryDelay(); err != nil {
+		return err
+	}
 
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, hs.transcript); err != nil {
 		return err

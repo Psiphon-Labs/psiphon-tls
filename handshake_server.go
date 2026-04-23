@@ -435,6 +435,20 @@ func (c *closedConn) SetWriteDeadline(_ time.Time) error {
 	return closedClosedError
 }
 
+// [Psiphon] Apply optional randomized delay before emitting a normal
+// ServerHello to mimic real-world CH->SH timing. This delay does not apply
+// to HelloRetryRequest.
+func (c *Conn) applyServerHelloMimicryDelay() error {
+	delay, err := c.config.serverHelloMimicryDelay()
+	if err != nil {
+		return err
+	}
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return nil
+}
+
 func (hs *serverHandshakeState) processClientHello() error {
 	c := hs.c
 
@@ -795,6 +809,9 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 	if err := transcriptMsg(hs.clientHello, &hs.finishedHash); err != nil {
 		return err
 	}
+	if err := c.applyServerHelloMimicryDelay(); err != nil {
+		return err
+	}
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, &hs.finishedHash); err != nil {
 		return err
 	}
@@ -832,6 +849,9 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		hs.finishedHash.discardHandshakeBuffer()
 	}
 	if err := transcriptMsg(hs.clientHello, &hs.finishedHash); err != nil {
+		return err
+	}
+	if err := c.applyServerHelloMimicryDelay(); err != nil {
 		return err
 	}
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, &hs.finishedHash); err != nil {

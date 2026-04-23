@@ -7,10 +7,12 @@ package tls
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"math/rand"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -565,6 +567,110 @@ func TestRejectEmptySCT(t *testing.T) {
 	var serverHelloCopy serverHelloMsg
 	if serverHelloCopy.unmarshal(serverHelloBytes) {
 		t.Fatal("Unmarshaled ServerHello with zero-length SCT")
+	}
+}
+
+func serverHelloExtensionIDs(t *testing.T, m *serverHelloMsg) []uint16 {
+	t.Helper()
+
+	data := mustMarshal(t, m)
+	if len(data) < 44 {
+		t.Fatalf("unexpected ServerHello length: %d", len(data))
+	}
+
+	i := 4 + 2 + 32
+	if i >= len(data) {
+		t.Fatal("unexpected end of ServerHello before session ID")
+	}
+	sessionIDLen := int(data[i])
+	i++
+	if i+sessionIDLen+3 > len(data) {
+		t.Fatal("unexpected end of ServerHello in fixed fields")
+	}
+	i += sessionIDLen
+	// cipherSuite(2) + compressionMethod(1)
+	i += 3
+
+	if i == len(data) {
+		return nil
+	}
+	if i+2 > len(data) {
+		t.Fatal("unexpected end of ServerHello before extension length")
+	}
+	extLen := int(binary.BigEndian.Uint16(data[i : i+2]))
+	i += 2
+	if i+extLen != len(data) {
+		t.Fatalf("invalid extension block length: got %d, remaining %d", extLen, len(data)-i)
+	}
+
+	exts := data[i:]
+	ids := make([]uint16, 0, 8)
+	for len(exts) > 0 {
+		if len(exts) < 4 {
+			t.Fatal("truncated extension header")
+		}
+		extID := binary.BigEndian.Uint16(exts[0:2])
+		extDataLen := int(binary.BigEndian.Uint16(exts[2:4]))
+		exts = exts[4:]
+		if len(exts) < extDataLen {
+			t.Fatal("truncated extension data")
+		}
+		ids = append(ids, extID)
+		exts = exts[extDataLen:]
+	}
+
+	return ids
+}
+
+func TestServerHelloExtensionOrderTLS12(t *testing.T) {
+	serverHello := &serverHelloMsg{
+		vers:                         VersionTLS12,
+		random:                       make([]byte, 32),
+		cipherSuite:                  TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		compressionMethod:            compressionNone,
+		secureRenegotiationSupported: true,
+		supportedPoints:              []uint8{pointFormatUncompressed},
+		ticketSupported:              true,
+		ocspStapling:                 true,
+		alpnProtocol:                 "h2",
+		scts:                         [][]byte{{0x01}},
+		extendedMasterSecret:         true,
+	}
+
+	got := serverHelloExtensionIDs(t, serverHello)
+	want := []uint16{
+		extensionRenegotiationInfo,
+		extensionSupportedPoints,
+		extensionSessionTicket,
+		extensionStatusRequest,
+		extensionALPN,
+		extensionSCT,
+		extensionExtendedMasterSecret,
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected TLS 1.2 ServerHello extension order: got %v, want %v", got, want)
+	}
+}
+
+func TestServerHelloExtensionOrderTLS13(t *testing.T) {
+	serverHello := &serverHelloMsg{
+		vers:              VersionTLS12,
+		random:            make([]byte, 32),
+		cipherSuite:       TLS_AES_128_GCM_SHA256,
+		compressionMethod: compressionNone,
+		supportedVersion:  VersionTLS13,
+		serverShare: keyShare{
+			group: X25519,
+			data:  []byte{0x01, 0x02},
+		},
+	}
+
+	got := serverHelloExtensionIDs(t, serverHello)
+	want := []uint16{extensionKeyShare, extensionSupportedVersions}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected TLS 1.3 ServerHello extension order: got %v, want %v", got, want)
 	}
 }
 

@@ -1130,16 +1130,16 @@ type serverHelloMsg struct {
 	selectedGroup CurveID
 }
 
+// [Psiphon] Reorder ServerHello extensions to better match common
+// OpenSSL/BoringSSL emission order for mimicry and JA3S alignment.
+//
+// This intentionally diverges from upstream crypto/tls ordering.
+//
+// References:
+// - https://github.com/openssl/openssl/blob/2a5385511051d33be8d2b20d7669d8b1862fe510/ssl/statem/extensions.c#L119
+// - https://github.com/Psiphon-Labs/psiphon-tunnel-core/commit/995fc206a2f10ce4f5d53b4d80062319c104c313
 func (m *serverHelloMsg) marshal() ([]byte, error) {
 	var exts cryptobyte.Builder
-	if m.ocspStapling {
-		exts.AddUint16(extensionStatusRequest)
-		exts.AddUint16(0) // empty extension_data
-	}
-	if m.ticketSupported {
-		exts.AddUint16(extensionSessionTicket)
-		exts.AddUint16(0) // empty extension_data
-	}
 	if m.secureRenegotiationSupported {
 		exts.AddUint16(extensionRenegotiationInfo)
 		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -1148,8 +1148,20 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 			})
 		})
 	}
-	if m.extendedMasterSecret {
-		exts.AddUint16(extensionExtendedMasterSecret)
+	if len(m.supportedPoints) > 0 {
+		exts.AddUint16(extensionSupportedPoints)
+		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+			exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
+				exts.AddBytes(m.supportedPoints)
+			})
+		})
+	}
+	if m.ticketSupported {
+		exts.AddUint16(extensionSessionTicket)
+		exts.AddUint16(0) // empty extension_data
+	}
+	if m.ocspStapling {
+		exts.AddUint16(extensionStatusRequest)
 		exts.AddUint16(0) // empty extension_data
 	}
 	if len(m.alpnProtocol) > 0 {
@@ -1174,11 +1186,9 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 			})
 		})
 	}
-	if m.supportedVersion != 0 {
-		exts.AddUint16(extensionSupportedVersions)
-		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
-			exts.AddUint16(m.supportedVersion)
-		})
+	if m.extendedMasterSecret {
+		exts.AddUint16(extensionExtendedMasterSecret)
+		exts.AddUint16(0) // empty extension_data
 	}
 	if m.serverShare.group != 0 {
 		exts.AddUint16(extensionKeyShare)
@@ -1187,6 +1197,18 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 			exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 				exts.AddBytes(m.serverShare.data)
 			})
+		})
+	}
+	if m.selectedGroup != 0 {
+		exts.AddUint16(extensionKeyShare)
+		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+			exts.AddUint16(uint16(m.selectedGroup))
+		})
+	}
+	if m.supportedVersion != 0 {
+		exts.AddUint16(extensionSupportedVersions)
+		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+			exts.AddUint16(m.supportedVersion)
 		})
 	}
 	if m.selectedIdentityPresent {
@@ -1201,20 +1223,6 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 			exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 				exts.AddBytes(m.cookie)
-			})
-		})
-	}
-	if m.selectedGroup != 0 {
-		exts.AddUint16(extensionKeyShare)
-		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
-			exts.AddUint16(uint16(m.selectedGroup))
-		})
-	}
-	if len(m.supportedPoints) > 0 {
-		exts.AddUint16(extensionSupportedPoints)
-		exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
-			exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
-				exts.AddBytes(m.supportedPoints)
 			})
 		})
 	}
