@@ -7,10 +7,12 @@ package tls
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"math/rand"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -72,8 +74,16 @@ func TestMarshalUnmarshal(t *testing.T) {
 					break
 				}
 
-				if m, ok := m.(*SessionState); ok {
-					m.activeCertHandles = nil
+				if ch, ok := m.(*clientHelloMsg); ok {
+					// extensions is special cased, as it is only populated by the
+					// server-side of a handshake and is not expected to roundtrip
+					// through marshal + unmarshal.  m ends up with the list of
+					// extensions necessary to serialize the other fields of
+					// clientHelloMsg, so check that it is non-empty, then clear it.
+					if len(ch.extensions) == 0 {
+						t.Errorf("expected ch.extensions to be populated on unmarshal")
+					}
+					ch.extensions = nil
 				}
 
 				// clientHelloMsg and serverHelloMsg, when unmarshalled, store
@@ -171,10 +181,10 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		}
 	}
 	if rand.Intn(10) > 5 {
-		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms()
+		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms(VersionTLS12)
 	}
 	if rand.Intn(10) > 5 {
-		m.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithms()
+		m.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithms(VersionTLS12)
 	}
 	for i := 0; i < rand.Intn(5); i++ {
 		m.alpnProtocols = append(m.alpnProtocols, randomString(rand.Intn(20)+1, rand))
@@ -219,6 +229,9 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	}
 	if rand.Intn(10) > 5 {
 		m.earlyData = true
+	}
+	if rand.Intn(10) > 5 {
+		m.encryptedClientHello = randomBytes(rand.Intn(50)+1, rand)
 	}
 
 	return reflect.ValueOf(m)
@@ -409,11 +422,13 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	if rand.Intn(10) > 5 && s.EarlyData {
 		s.alpnProtocol = string(randomBytes(rand.Intn(10), rand))
 	}
-	if s.isClient {
-		if isTLS13 {
+	if isTLS13 {
+		if s.isClient {
 			s.useBy = uint64(rand.Int63())
 			s.ageAdd = uint32(rand.Int63() & math.MaxUint32)
 		}
+	} else {
+		s.curveID = CurveID(rand.Intn(30000) + 1)
 	}
 	return reflect.ValueOf(s)
 }
@@ -460,10 +475,10 @@ func (*certificateRequestMsgTLS13) Generate(rand *rand.Rand, size int) reflect.V
 		m.scts = true
 	}
 	if rand.Intn(10) > 5 {
-		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms()
+		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms(VersionTLS12)
 	}
 	if rand.Intn(10) > 5 {
-		m.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithms()
+		m.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithms(VersionTLS12)
 	}
 	if rand.Intn(10) > 5 {
 		m.certificateAuthorities = make([][]byte, 3)
@@ -552,6 +567,110 @@ func TestRejectEmptySCT(t *testing.T) {
 	var serverHelloCopy serverHelloMsg
 	if serverHelloCopy.unmarshal(serverHelloBytes) {
 		t.Fatal("Unmarshaled ServerHello with zero-length SCT")
+	}
+}
+
+func serverHelloExtensionIDs(t *testing.T, m *serverHelloMsg) []uint16 {
+	t.Helper()
+
+	data := mustMarshal(t, m)
+	if len(data) < 44 {
+		t.Fatalf("unexpected ServerHello length: %d", len(data))
+	}
+
+	i := 4 + 2 + 32
+	if i >= len(data) {
+		t.Fatal("unexpected end of ServerHello before session ID")
+	}
+	sessionIDLen := int(data[i])
+	i++
+	if i+sessionIDLen+3 > len(data) {
+		t.Fatal("unexpected end of ServerHello in fixed fields")
+	}
+	i += sessionIDLen
+	// cipherSuite(2) + compressionMethod(1)
+	i += 3
+
+	if i == len(data) {
+		return nil
+	}
+	if i+2 > len(data) {
+		t.Fatal("unexpected end of ServerHello before extension length")
+	}
+	extLen := int(binary.BigEndian.Uint16(data[i : i+2]))
+	i += 2
+	if i+extLen != len(data) {
+		t.Fatalf("invalid extension block length: got %d, remaining %d", extLen, len(data)-i)
+	}
+
+	exts := data[i:]
+	ids := make([]uint16, 0, 8)
+	for len(exts) > 0 {
+		if len(exts) < 4 {
+			t.Fatal("truncated extension header")
+		}
+		extID := binary.BigEndian.Uint16(exts[0:2])
+		extDataLen := int(binary.BigEndian.Uint16(exts[2:4]))
+		exts = exts[4:]
+		if len(exts) < extDataLen {
+			t.Fatal("truncated extension data")
+		}
+		ids = append(ids, extID)
+		exts = exts[extDataLen:]
+	}
+
+	return ids
+}
+
+func TestServerHelloExtensionOrderTLS12(t *testing.T) {
+	serverHello := &serverHelloMsg{
+		vers:                         VersionTLS12,
+		random:                       make([]byte, 32),
+		cipherSuite:                  TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		compressionMethod:            compressionNone,
+		secureRenegotiationSupported: true,
+		supportedPoints:              []uint8{pointFormatUncompressed},
+		ticketSupported:              true,
+		ocspStapling:                 true,
+		alpnProtocol:                 "h2",
+		scts:                         [][]byte{{0x01}},
+		extendedMasterSecret:         true,
+	}
+
+	got := serverHelloExtensionIDs(t, serverHello)
+	want := []uint16{
+		extensionRenegotiationInfo,
+		extensionSupportedPoints,
+		extensionSessionTicket,
+		extensionStatusRequest,
+		extensionALPN,
+		extensionSCT,
+		extensionExtendedMasterSecret,
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected TLS 1.2 ServerHello extension order: got %v, want %v", got, want)
+	}
+}
+
+func TestServerHelloExtensionOrderTLS13(t *testing.T) {
+	serverHello := &serverHelloMsg{
+		vers:              VersionTLS12,
+		random:            make([]byte, 32),
+		cipherSuite:       TLS_AES_128_GCM_SHA256,
+		compressionMethod: compressionNone,
+		supportedVersion:  VersionTLS13,
+		serverShare: keyShare{
+			group: X25519,
+			data:  []byte{0x01, 0x02},
+		},
+	}
+
+	got := serverHelloExtensionIDs(t, serverHello)
+	want := []uint16{extensionKeyShare, extensionSupportedVersions}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected TLS 1.3 ServerHello extension order: got %v, want %v", got, want)
 	}
 }
 
