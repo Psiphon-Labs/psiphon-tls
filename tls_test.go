@@ -984,6 +984,38 @@ func TestCloneNonFuncFields(t *testing.T) {
 	if !reflect.DeepEqual(&c1, c2) {
 		t.Errorf("clone failed to copy a field")
 	}
+
+	if c2.PassthroughAddress != c1.PassthroughAddress {
+		t.Errorf("clone failed to copy PassthroughAddress")
+	}
+	if c2.UseObfuscatedSessionTickets != c1.UseObfuscatedSessionTickets {
+		t.Errorf("clone failed to copy UseObfuscatedSessionTickets")
+	}
+	if c2.ClientHelloPRNG != c1.ClientHelloPRNG {
+		t.Errorf("clone failed to copy ClientHelloPRNG")
+	}
+
+	// [Psiphon] Verify function/callback fields that are skipped in the
+	// reflect.DeepEqual setup above.
+	c3 := c1
+	c3.GetClientHelloRandom = func() ([]byte, error) { return []byte{1, 2, 3}, nil }
+	c3.PassthroughVerifyMessage = func([]byte) bool { return true }
+	c3.PassthroughHistoryAddNew = func(string, []byte) bool { return true }
+	c3.PassthroughLogInvalidMessage = func(string) {}
+	c4 := c3.Clone()
+
+	if c4.GetClientHelloRandom == nil {
+		t.Errorf("clone failed to copy GetClientHelloRandom")
+	}
+	if c4.PassthroughVerifyMessage == nil {
+		t.Errorf("clone failed to copy PassthroughVerifyMessage")
+	}
+	if c4.PassthroughHistoryAddNew == nil {
+		t.Errorf("clone failed to copy PassthroughHistoryAddNew")
+	}
+	if c4.PassthroughLogInvalidMessage == nil {
+		t.Errorf("clone failed to copy PassthroughLogInvalidMessage")
+	}
 }
 
 func TestCloneNilConfig(t *testing.T) {
